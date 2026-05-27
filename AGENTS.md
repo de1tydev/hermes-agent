@@ -40,7 +40,7 @@ hermes-agent/
 │   │                     #   yuanbao, webhook, api_server, ...). See ADDING_A_PLATFORM.md.
 │   └── builtin_hooks/    # Extension point for always-registered gateway hooks (none shipped)
 ├── plugins/              # Plugin system (see "Plugins" section below)
-│   ├── memory/           # Memory-provider plugins (honcho, mem0, supermemory, ...)
+│   ├── memory/           # Memory-provider plugins (hindsight, mem0, supermemory, ...)
 │   ├── context_engine/   # Context-engine plugins
 │   ├── model-providers/  # Inference backend plugins (openrouter, anthropic, gmi, ...)
 │   ├── kanban/           # Multi-agent board dispatcher + worker plugin
@@ -346,7 +346,7 @@ Reference: #2810 (bounds pass), #9801 (SHA pinning + audit CI).
 `model`, `agent`, `terminal`, `compression`, `display`, `stt`, `tts`,
 `memory`, `security`, `delegation`, `smart_model_routing`, `checkpoints`,
 `auxiliary`, `curator`, `skills`, `gateway`, `logging`, `cron`, `profiles`,
-`plugins`, `honcho`.
+`plugins`, `hindsight`.
 
 `auxiliary` holds per-task overrides for side-LLM work (curator, vision,
 embedding, title generation, session_search, etc.) — each task can pin
@@ -513,13 +513,21 @@ explicitly (it's idempotent).
 ### Memory-provider plugins (`plugins/memory/<name>/`)
 
 Separate discovery system for pluggable memory backends. Current built-in
-providers include **honcho, mem0, supermemory, byterover, hindsight,
+providers include **hindsight, mem0, supermemory, byterover,
 holographic, openviking, retaindb**.
 
 Each provider implements the `MemoryProvider` ABC (see `agent/memory_provider.py`)
 and is orchestrated by `agent/memory_manager.py`. Lifecycle hooks include
 `sync_turn(turn_messages)`, `prefetch(query)`, `shutdown()`, and optional
 `post_setup(hermes_home, config)` for setup-wizard integration.
+
+**Hindsight usage policy:** default to automatic prefetch/recall injection.
+Call `hindsight_recall` only when injected memory is missing, weak, stale,
+conflicting, or the user asks about prior decisions, exact wording, or evidence.
+Call `hindsight_reflect` when synthesizing across multiple memories or deriving a
+historical trend. Call `hindsight_retain` for durable user preferences, approved
+configuration changes, migration conclusions, and reusable debugging lessons.
+Never retain secrets, credentials, noisy logs, or disposable scratch context.
 
 **CLI commands via `plugins/memory/<name>/cli.py`:** if a memory plugin
 defines `register_cli(subparser)`, `discover_plugin_cli_commands()` finds
@@ -532,8 +540,8 @@ providers don't clutter `hermes --help`.
 (`run_agent.py`, `cli.py`, `gateway/run.py`, `hermes_cli/main.py`, etc.).
 If a plugin needs a capability the framework doesn't expose, expand the
 generic plugin surface (new hook, new ctx method) — never hardcode
-plugin-specific logic into core. PR #5295 removed 95 lines of hardcoded
-honcho argparse from `main.py` for exactly this reason.
+plugin-specific logic into core. Past cleanup removed hardcoded
+memory-provider argparse from `main.py` for exactly this reason.
 
 **No new in-tree memory providers (policy, May 2026):** the set of
 built-in memory providers under `plugins/memory/` is closed. New memory
