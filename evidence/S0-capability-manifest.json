@@ -1,0 +1,140 @@
+{
+  "stage_id": "S0-evidence-boundary",
+  "generated_at_utc": "2026-06-02T10:13:52Z",
+  "evidence_files": [
+    "evidence/S0-openclaw-capability.md",
+    "evidence/S0-hermes-capability.md",
+    "evidence/S0-current-config.md",
+    "evidence/S0-source-test-command-matrix.md"
+  ],
+  "repo_roots": {
+    "hermes": {
+      "path": "/home/liao/.hermes/hermes-agent",
+      "branch": "local/v0.15-main-runtime",
+      "baseline_commit": "14883e5a9bfdae9dfc440d77ddb2282056feb951",
+      "remote_origin": "git@github.com:NousResearch/hermes-agent.git"
+    },
+    "openclaw_hindsight": {
+      "path": "/home/liao/code/hindsight",
+      "branch": "fix/openclaw-retain-context",
+      "commit": "bea43385c60eaf1c374b06eebd5515dc625f5000",
+      "remote_origin": "https://github.com/vectorize-io/hindsight.git"
+    }
+  },
+  "openclaw": {
+    "runtime": {
+      "cli_path": "/home/liao/.local/bin/openclaw",
+      "version": "OpenClaw 2026.5.19 (b6d41a5)",
+      "package_cwd": "/home/liao/.openclaw/npm/node_modules/@vectorize-io/hindsight-openclaw",
+      "runtime_dist": "/home/liao/.openclaw/npm/node_modules/@vectorize-io/hindsight-openclaw/dist/index.js",
+      "package_version": "0.7.7"
+    },
+    "source_package": {
+      "package_cwd": "/home/liao/code/hindsight/hindsight-integrations/openclaw",
+      "package_json": "/home/liao/code/hindsight/hindsight-integrations/openclaw/package.json",
+      "package_version": "0.8.0",
+      "build_output": "dist/",
+      "sync_direction": "source package build output -> installed runtime package during release/install; no direct node_modules patch deliverable"
+    },
+    "hooks": [
+      "before_dispatch",
+      "before_prompt_build",
+      "agent_end",
+      "session_end"
+    ],
+    "summary_key_boundary": {
+      "configured_bank_id": "saber-prod",
+      "dynamic_bank_id": false,
+      "derive_bank_id_rule": "dynamicBankId=false returns the configured static bank via getStaticBankId; dynamic mode uses agent/channel/user by default",
+      "identity_skip_required": true,
+      "stateless_skip_required": true
+    },
+    "llm_helper": {
+      "available": false,
+      "decision": "missing_stable_plugin_llm_helper",
+      "evidence": "detectLLMConfig configures the Hindsight daemon/client path; no stable plugin-side arbitrary LLM helper was found for summary generation",
+      "skip_or_fail_reason": "S4/S5 must use no-op/fake generator or correct-course if a real OpenClaw-side summary generator requires a stable host LLM helper"
+    },
+    "commands": {
+      "build": "npm run build",
+      "unit_test": "npm run test",
+      "integration_test": "npm run test:integration",
+      "publish_preflight": "npm run prepublishOnly"
+    }
+  },
+  "hermes": {
+    "runtime": {
+      "cli_path": "/home/liao/.local/bin/hermes",
+      "version": "Hermes Agent v0.15.2 (2026.5.29.2)"
+    },
+    "provider_lifecycle": {
+      "provider_class": "plugins/memory/hindsight/__init__.py:HindsightMemoryProvider",
+      "abstract_contract": "agent/memory_provider.py:MemoryProvider",
+      "manager": "agent/memory_manager.py:MemoryManager",
+      "required_hooks": [
+        "initialize",
+        "system_prompt_block",
+        "prefetch",
+        "queue_prefetch",
+        "sync_turn",
+        "get_tool_schemas",
+        "handle_tool_call",
+        "on_session_switch",
+        "shutdown"
+      ]
+    },
+    "config_schema": {
+      "default_config_path": "hermes_cli/config.py:DEFAULT_CONFIG.memory",
+      "provider_schema_path": "plugins/memory/hindsight/__init__.py:get_config_schema",
+      "mode_values": [
+        "cloud",
+        "local_embedded",
+        "local_external"
+      ],
+      "secret_fields": [
+        "api_key",
+        "llm_api_key"
+      ]
+    },
+    "commands": {
+      "full_tests": "scripts/run_tests.sh",
+      "s0_validator": "python scripts/validate-s0-capability-manifest.py evidence/S0-capability-manifest.json"
+    }
+  },
+  "config_snapshot": {
+    "raw_evidence_root": "projects/hindsight-session-summary-eps/sde-state/artifacts/hindsight-session-summary/S0-evidence-boundary/raw-evidence",
+    "redacted_hashes": {
+      "openclaw_openclaw_json_selected": "3f78528633a7a61a98ab3556c37baff74af219a1870a6f0fc76513b2b680d61f",
+      "hermes_config_yaml_memory_section": "45f3de95d1087b69c6112ac4308124faa4cf3812d0af46c05689509f647b3c28",
+      "hermes_hindsight_config_json": "a4505a7c6ec93d51e281a694e1c71f7193fd7b6e2bddf0915e1c17abb79555d9"
+    },
+    "openclaw_current_values": {
+      "bankId": "saber-prod",
+      "dynamicBankId": false,
+      "autoRecall": true,
+      "autoRetain": true,
+      "retainEveryNTurns": 2,
+      "retainOverlapTurns": 2,
+      "recallContextTurns": 3,
+      "recallMaxQueryChars": 4000,
+      "hindsightApiUrl": "http://127.0.0.1:8888",
+      "skipStatelessSessions": true
+    },
+    "hermes_current_values": {
+      "memory_provider": "hindsight",
+      "hindsight_mode": "local_external",
+      "bank_id": "saber-prod",
+      "api_url": "http://127.0.0.1:8888",
+      "memory_mode": "hybrid",
+      "recall_prefetch_method": "recall",
+      "recall_max_input_chars": 4000,
+      "retain_every_n_turns": 2,
+      "retain_async": true
+    }
+  },
+  "downstream_guards": {
+    "node_modules_dist_is_not_implementation_target": true,
+    "missing_openclaw_llm_helper_requires_noop_or_correct_course": true,
+    "raw_secret_values_committed": false
+  }
+}
