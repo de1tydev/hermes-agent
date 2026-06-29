@@ -86,6 +86,43 @@ def _build_codex_gpt55_autoraise_notice(autoraise: Dict[str, float]) -> str:
     )
 
 
+_CODEX_GPT55_AUTORAISE_NOTICE_CACHE = "codex_gpt55_autoraise_notice_seen"
+
+
+def _codex_gpt55_autoraise_notice_key(autoraise: Dict[str, float]) -> str:
+    return f"{autoraise.get('from', 0.0):.4f}->{autoraise.get('to', 0.0):.4f}"
+
+
+def _codex_gpt55_autoraise_notice_cache_path():
+    try:
+        cache_dir = get_hermes_home() / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / _CODEX_GPT55_AUTORAISE_NOTICE_CACHE
+    except Exception:
+        return None
+
+
+def _claim_codex_gpt55_autoraise_notice(autoraise: Dict[str, float]) -> bool:
+    """Return True the first time this exact threshold raise should be shown."""
+    key = _codex_gpt55_autoraise_notice_key(autoraise)
+    path = _codex_gpt55_autoraise_notice_cache_path()
+    if path is None:
+        return True
+    try:
+        seen = {
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        } if path.exists() else set()
+        if key in seen:
+            return False
+        seen.add(key)
+        path.write_text("\n".join(sorted(seen)) + "\n", encoding="utf-8")
+        return True
+    except Exception:
+        return True
+
+
 def _normalized_custom_base_url(value: Any) -> str:
     if not isinstance(value, str):
         return ""
@@ -1826,6 +1863,13 @@ def init_agent(
             agent._ollama_num_ctx,
         )
 
+    _autoraise = getattr(agent, "_compression_threshold_autoraised", None)
+    _show_codex_gpt55_autoraise_notice = (
+        bool(_autoraise)
+        and compression_enabled
+        and _claim_codex_gpt55_autoraise_notice(_autoraise)
+    )
+
     if not agent.quiet_mode:
         if compression_enabled:
             print(f"📊 Context limit: {agent.context_compressor.context_length:,} tokens (compress at {int(compression_threshold*100)}% = {agent.context_compressor.threshold_tokens:,})")
@@ -1835,8 +1879,7 @@ def init_agent(
         # exact opt-back-out command. Printed inline at startup for CLI users;
         # gateway users get the same text replayed via _compression_warning on
         # turn 1 (set below, after the warning slot is initialized).
-        _autoraise = getattr(agent, "_compression_threshold_autoraised", None)
-        if _autoraise and compression_enabled:
+        if _show_codex_gpt55_autoraise_notice:
             print(_build_codex_gpt55_autoraise_notice(_autoraise))
 
     # Check immediately so CLI users see the warning at startup.
@@ -1846,8 +1889,7 @@ def init_agent(
     # Gateway parity for the Codex gpt-5.5 autoraise notice: the startup print
     # above only reaches the CLI, so stash the same text here to be replayed
     # through status_callback on the first turn (Telegram/Discord/Slack/etc.).
-    _autoraise = getattr(agent, "_compression_threshold_autoraised", None)
-    if _autoraise and compression_enabled:
+    if _show_codex_gpt55_autoraise_notice:
         agent._compression_warning = _build_codex_gpt55_autoraise_notice(_autoraise)
     # Lazy feasibility check: deferred to the first turn that approaches the
     # compression threshold. Running it eagerly here costs ~400ms cold (network
