@@ -99,35 +99,6 @@ Config file: `~/.hermes/hindsight/config.json`
 | `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts |
 | `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
 
-### Session Summary Generator
-
-These keys configure the structured summary generator surface. In this stage,
-the assembly helpers and config defaults are available, but lifecycle hooks are
-not wired. Summary consumption stays disabled by default.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `session_summary_enabled` | `false` | Enables the summary generator surface for future lifecycle wiring |
-| `session_summary_enrich_recall_query` | `false` | Future flag for adding rolling summary context after the latest recall query; no lifecycle wiring in this stage |
-| `session_summary_enrich_retain_context` | `false` | Future flag for adding rolling summary text to retain extraction context, never transcript content; no lifecycle wiring in this stage |
-| `session_summary_inject_prompt` | `false` | Future flag for rendering a separate prompt summary block outside recalled memory blocks; no lifecycle wiring in this stage |
-| `session_summary_generator_provider` | — | LLM provider for future real summary generation |
-| `session_summary_generator_model` | — | LLM model for future real summary generation |
-| `session_summary_generator_base_url` | — | Optional OpenAI-compatible summary model endpoint |
-| `session_summary_generator_api_key_env` | `HINDSIGHT_LLM_API_KEY` | Environment variable name for the summary model key |
-| `session_summary_reuse_hindsight_llm_config` | `true` | Reuse local embedded Hindsight LLM config when summary-specific fields are unset |
-| `session_summary_update_every_n_turns` | — | Optional summary refresh cadence independent from `retain_every_n_turns` |
-| `session_summary_min_update_every_n_turns` | `2` | Minimum refresh cadence; prevents per-turn summary LLM calls by default |
-| `session_summary_timeout_seconds` | `20` | Timeout for future background summary generation |
-| `session_summary_max_input_chars` | `16000` | Maximum characters considered by summary generation |
-| `session_summary_max_output_chars` | `2000` | Maximum rendered summary characters |
-| `session_summary_max_recall_query_chars` | `800` | Budget for future summary-derived recall query text |
-| `session_summary_recall_query_budget_ratio` | `0.25` | Maximum fraction of summary input budget usable for future recall query text |
-| `session_summary_max_prompt_inject_chars` | `1200` | Budget for future prompt-injected summary context |
-| `session_summary_max_retain_context_chars` | `1200` | Budget for future retain context summary text |
-| `session_summary_min_latest_query_reserve_chars` | `400` | Latest-query reserve when trimming summary inputs |
-| `session_summary_drop_completed_todos_after_turns` | `20` | Age after which completed todos may be dropped from summaries |
-
 ### Integration
 
 | Key | Default | Description |

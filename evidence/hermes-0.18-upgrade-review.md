@@ -2,6 +2,8 @@
 
 日期：2026-07-02
 
+> 2026-08-11 更新：本文对 rolling session summary 的保留结论已废止；对应实现、配置面和测试已移除。下文保留为当时的升级审计记录。
+
 ## 升级结论
 
 已将本地 `main` rebase 到上游正式发布 `v2026.7.1`，对应 Hermes Agent `v0.18.0`。生产目录保持不变，仍为 `/home/liao/.hermes/hermes-agent`；user systemd 服务 `hermes-gateway.service` 已刷新并重启。

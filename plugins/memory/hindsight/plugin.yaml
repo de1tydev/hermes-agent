@@ -5,4 +5,8 @@ pip_dependencies:
   - "hindsight-client>=0.6.1"
 requires_env: []
 hooks:
-  - on_session_end
+  - sync_turn
+  - queue_prefetch
+  - prefetch
+  - on_session_switch
+  - shutdown
