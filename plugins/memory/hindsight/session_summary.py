@@ -9,7 +9,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-SESSION_SUMMARY_SCHEMA_VERSION = 2
+SESSION_SUMMARY_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
