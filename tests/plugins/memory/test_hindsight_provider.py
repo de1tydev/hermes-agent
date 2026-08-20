@@ -753,7 +753,6 @@ class TestPrefetch:
         )
         assert "may be stale" in rendered
 
-
     def test_recall_sync_defaults_off(self, provider):
         assert provider._recall_sync is False
 
