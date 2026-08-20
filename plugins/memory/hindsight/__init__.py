@@ -41,6 +41,8 @@ import re
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -88,6 +90,25 @@ def _parse_int_setting(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         logger.warning("Invalid integer Hindsight setting %r; using default %s", value, default)
         return default
+
+
+def _format_mental_models(models: list[dict[str, Any]]) -> str:
+    """Render matched user-curated models before lower-level memories."""
+    sections = []
+    for model in models:
+        freshness = (
+            "may be stale; verify against recalled memories and current reality"
+            if model.get("may_be_stale")
+            else "current at the bank write watermark"
+        )
+        truncated = " (truncated to the configured budget)" if model.get("truncated") else ""
+        sections.append(
+            f"### {model.get('name') or 'Mental model'}\n"
+            f"Relevance: {float(model.get('relevance') or 0):.3f}; "
+            f"freshness: {freshness}{truncated}\n\n"
+            f"{model.get('content') or ''}"
+        )
+    return "\n\n".join(sections)
 
 
 # Env var the embedded daemon manager reads (at import time, as a module-level
@@ -893,6 +914,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # Recall controls
         self._auto_recall = True
         self._recall_max_tokens = 4096
+        self._auto_recall_mental_models = False
+        self._mental_model_max_results = 3
+        self._mental_model_max_tokens = 1024
+        self._mental_model_min_relevance = 0.35
         # Default to observation-only recall. Observations are Hindsight's
         # consolidated knowledge layer — deduplicated, evidence-grounded
         # beliefs built from many raw facts, with proof counts and
@@ -1196,6 +1221,10 @@ class HindsightMemoryProvider(MemoryProvider):
             {"key": "recall_tags_match", "description": "Tag matching mode for recall", "default": "any", "choices": ["any", "all", "any_strict", "all_strict"]},
             {"key": "recall_types", "description": "Fact types to surface on recall — applies to both auto-recall and the hindsight_recall tool (comma-separated or list). Defaults to observation-only — observations are Hindsight's consolidated, deduplicated, evidence-grounded knowledge layer; raw world/experience facts are the supporting evidence observations already summarize. Set to e.g. 'observation,world,experience' to also include raw facts.", "default": "observation"},
             {"key": "auto_recall", "description": "Automatically recall memories before each turn", "default": True},
+            {"key": "auto_recall_mental_models", "description": "Semantically search and inject matched user-curated mental models before ordinary memories", "default": False},
+            {"key": "mental_model_max_results", "description": "Maximum matched mental models per turn", "default": 3},
+            {"key": "mental_model_max_tokens", "description": "Shared token budget for matched mental-model content", "default": 1024},
+            {"key": "mental_model_min_relevance", "description": "Minimum vector relevance for mental-model auto-recall", "default": 0.35},
             {"key": "auto_retain", "description": "Automatically retain conversation turns", "default": True},
             {"key": "retain_every_n_turns", "description": "Retain every N turns (1 = every turn)", "default": 1},
             {"key": "retain_async","description": "Process retain asynchronously on the Hindsight server", "default": True},
@@ -1697,6 +1726,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # Recall controls
         self._auto_recall = self._config.get("auto_recall", True)
         self._recall_max_tokens = int(self._config.get("recall_max_tokens", 4096))
+        self._auto_recall_mental_models = self._config.get("auto_recall_mental_models", False) is True
+        self._mental_model_max_results = max(1, int(self._config.get("mental_model_max_results", 3)))
+        self._mental_model_max_tokens = max(1, int(self._config.get("mental_model_max_tokens", 1024)))
+        self._mental_model_min_relevance = float(self._config.get("mental_model_min_relevance", 0.35))
         # Default narrows recall to observation-only; pass an explicit
         # `recall_types` list in config.json to broaden (e.g. include
         # "world" / "experience") or to disable the filter entirely.
@@ -1832,6 +1865,33 @@ class HindsightMemoryProvider(MemoryProvider):
             return text[:self._recall_max_input_chars].rstrip()
         return text
 
+    def _search_mental_models(self, query: str) -> list[dict[str, Any]]:
+        """Call the low-latency semantic mental-model search endpoint."""
+        path = (
+            f"/v1/default/banks/{urllib.parse.quote(self._bank_id, safe='')}"
+            "/mental-models/search"
+        )
+        request = urllib.request.Request(
+            f"{self._api_url.rstrip('/')}{path}",
+            data=json.dumps(
+                {
+                    "query": query,
+                    "max_results": self._mental_model_max_results,
+                    "max_tokens": self._mental_model_max_tokens,
+                    "min_relevance": self._mental_model_min_relevance,
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                **({"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}),
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=min(float(self._timeout), 10.0)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        items = payload.get("items") if isinstance(payload, dict) else None
+        return items if isinstance(items, list) else []
+
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if self._prefetch_thread and self._prefetch_thread.is_alive():
@@ -1877,10 +1937,23 @@ class HindsightMemoryProvider(MemoryProvider):
             if self._prefetch_waits_for_retain:
                 self._wait_for_retains_drained(self._prefetch_retain_drain_timeout)
             try:
+                context_parts = []
+                if self._auto_recall_mental_models:
+                    try:
+                        mental_models = self._search_mental_models(query)
+                        if mental_models:
+                            context_parts.append(
+                                "Matched user-curated mental models. Use these first. A model marked as "
+                                "possibly stale is guidance, not current ground truth; verify it against "
+                                "lower-level memories and live evidence.\n\n"
+                                + _format_mental_models(mental_models)
+                            )
+                    except Exception as exc:
+                        logger.debug("Mental model prefetch failed: %s", exc, exc_info=True)
                 if self._prefetch_method == "reflect":
                     logger.debug("Prefetch: calling reflect (bank=%s, query_len=%d)", self._bank_id, len(query))
                     resp = self._run_hindsight_operation(lambda client: client.areflect(bank_id=self._bank_id, query=query, budget=self._budget))
-                    text = resp.text or ""
+                    recalled_text = resp.text or ""
                 else:
                     recall_kwargs: dict = {
                         "bank_id": self._bank_id, "query": query,
@@ -1896,7 +1969,10 @@ class HindsightMemoryProvider(MemoryProvider):
                     resp = self._run_hindsight_operation(lambda client: client.arecall(**recall_kwargs))
                     num_results = len(resp.results) if resp.results else 0
                     logger.debug("Prefetch: recall returned %d results", num_results)
-                    text = "\n".join(f"- {r.text}" for r in resp.results if r.text) if resp.results else ""
+                    recalled_text = "\n".join(f"- {r.text}" for r in resp.results if r.text) if resp.results else ""
+                if recalled_text:
+                    context_parts.append(recalled_text)
+                text = "\n\n".join(context_parts)
                 if text:
                     with self._prefetch_lock:
                         self._prefetch_result = text

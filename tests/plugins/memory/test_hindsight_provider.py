@@ -24,6 +24,7 @@ from plugins.memory.hindsight import (
     REFLECT_SCHEMA,
     RETAIN_SCHEMA,
     _load_config,
+    _format_mental_models,
     _load_simple_env,
     _build_embedded_profile_env,
     _normalize_observation_scopes,
@@ -341,6 +342,9 @@ class TestConfig:
         assert provider._retain_every_n_turns == 1
         assert provider._recall_max_tokens == 4096
         assert provider._recall_max_input_chars == 800
+        assert provider._auto_recall_mental_models is False
+        assert provider._mental_model_max_results == 3
+        assert provider._mental_model_max_tokens == 1024
         assert provider._tags is None
         assert provider._observation_scopes is None
         assert provider._recall_tags is None
@@ -379,6 +383,10 @@ class TestConfig:
             recall_types=["world", "experience"],
             recall_prompt_preamble="Custom preamble:",
             recall_max_input_chars=500,
+            auto_recall_mental_models=True,
+            mental_model_max_results=2,
+            mental_model_max_tokens=768,
+            mental_model_min_relevance=0.5,
             bank_mission="Test agent mission",
         )
         assert p._tags == ["tag1", "tag2"]
@@ -397,6 +405,10 @@ class TestConfig:
         assert p._recall_types == ["world", "experience"]
         assert p._recall_prompt_preamble == "Custom preamble:"
         assert p._recall_max_input_chars == 500
+        assert p._auto_recall_mental_models is True
+        assert p._mental_model_max_results == 2
+        assert p._mental_model_max_tokens == 768
+        assert p._mental_model_min_relevance == 0.5
         assert p._bank_mission == "Test agent mission"
 
 
@@ -685,6 +697,47 @@ class TestToolHandlers:
 class TestPrefetch:
     def test_prefetch_returns_empty_when_no_result(self, provider):
         assert provider.prefetch("test") == ""
+
+    def test_prefetch_puts_mental_models_before_ordinary_memories(
+        self, provider_with_config, monkeypatch
+    ):
+        p = provider_with_config(auto_recall_mental_models=True)
+        monkeypatch.setattr(
+            p,
+            "_search_mental_models",
+            lambda query: [
+                {
+                    "id": "model-1",
+                    "name": "Deployment model",
+                    "content": "Verify the active runtime first.",
+                    "tags": [],
+                    "relevance": 0.92,
+                    "may_be_stale": False,
+                    "truncated": False,
+                }
+            ],
+        )
+        p.queue_prefetch("How should I deploy?")
+        assert p._prefetch_thread is not None
+        p._prefetch_thread.join(timeout=5.0)
+
+        context = p.prefetch("ignored")
+        assert context.index("Deployment model") < context.index("Memory 1")
+        assert "Verify the active runtime first." in context
+
+
+    def test_format_mental_models_marks_stale_models(self):
+        rendered = _format_mental_models(
+            [
+                {
+                    "name": "Operating model",
+                    "content": "Prefer runtime evidence.",
+                    "relevance": 0.9,
+                    "may_be_stale": True,
+                }
+            ]
+        )
+        assert "may be stale" in rendered
 
 
     def test_queue_prefetch_skipped_in_tools_mode(self, provider_with_config):
