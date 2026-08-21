@@ -2548,6 +2548,15 @@ class HindsightMemoryProvider(MemoryProvider):
         if not new_id:
             return
 
+        # Keep the lifecycle hook compatible with providers restored or
+        # constructed without running the current __init__ implementation.
+        if not hasattr(self, "_retain_buffer_lock"):
+            self._retain_buffer_lock = threading.Lock()
+        if not hasattr(self, "_retained_turns"):
+            self._retained_turns = []
+        if not hasattr(self, "_retain_generation"):
+            self._retain_generation = 0
+
         # 1. Flush any buffered turns under the OLD identifiers. Snapshot
         # everything before mutating self._* so metadata + tags + doc_id
         # all reference the old session consistently.
