@@ -1,0 +1,37 @@
+name: hermes-tode68
+
+x-hermes-gateway: &hermes-gateway
+  image: tode/hermes-agent:062891a612
+  restart: unless-stopped
+  network_mode: host
+  stop_grace_period: 120s
+  volumes:
+    - /srv/hermes:/opt/data
+  environment:
+    HERMES_UID: "10000"
+    HERMES_GID: "10000"
+  command: ["gateway", "run"]
+  healthcheck:
+    test: ["CMD-SHELL", "pgrep -f 'gateway.*run' >/dev/null"]
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 60s
+  logging:
+    driver: json-file
+    options:
+      max-size: 20m
+      max-file: "5"
+
+services:
+  gateway-primary:
+    <<: *hermes-gateway
+    container_name: hermes-gateway-primary
+    env_file:
+      - /srv/hermes/.env
+
+  gateway-secondary:
+    <<: *hermes-gateway
+    container_name: hermes-gateway-secondary
+    env_file:
+      - /srv/hermes/gateway-secondary.env
