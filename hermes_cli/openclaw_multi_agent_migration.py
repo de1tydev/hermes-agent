@@ -12,7 +12,7 @@ import os
 import re
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -23,6 +23,9 @@ USER_REGISTRY_SCHEMA = "openclaw-automation-user-registry/v1"
 GROUP_REGISTRY_SCHEMA = "openclaw-automation-group-registry/v1"
 PROFILE_MARKER_SCHEMA = "hermes-openclaw-profile/v1"
 WORKSPACE_MARKER_SCHEMA = "hermes-openclaw-workspace/v1"
+BINDING_RESOLUTIONS_SCHEMA = "hermes-openclaw-binding-resolutions/v1"
+RESTORE_POINT_SCHEMA = "hermes-openclaw-restore-point/v1"
+RETIRE_REASON = "channel_wide_route_replaced_by_identity_routes"
 
 _PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _DENIED_PARTS = frozenset(
@@ -82,7 +85,8 @@ _MEDIA_SUFFIXES = (
     ".webp",
 )
 _SECRET_CONTENT = re.compile(
-    rb"(?i)(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]|"
+    rb"(?i)(?:api[_-]?key|access[_-]?token|bot[_-]?token|client[_-]?secret|"
+    rb"password|authorization)[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?|"
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
     rb"\b(?:sk|xox[baprs]|gh[pousr])-[A-Za-z0-9_-]{8,}"
 )
@@ -122,6 +126,18 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _file_identity(path: Path, root: Path) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise MultiAgentMigrationError("source_file_invalid", path.name)
+    stat_result = path.stat(follow_symlinks=False)
+    return {
+        "mtime_ns": stat_result.st_mtime_ns,
+        "relative_path": _relative(path, root),
+        "sha256": _sha256_file(path),
+        "size": stat_result.st_size,
+    }
 
 
 def _load_json(path: Path, code: str) -> dict[str, Any]:
@@ -167,9 +183,58 @@ def _denied_path(relative_path: str) -> bool:
 class MultiAgentMigration:
     """Build an immutable plan and apply it to one Hermes home."""
 
-    def __init__(self, source_root: Path, target_root: Path) -> None:
+    def __init__(
+        self,
+        source_root: Path,
+        target_root: Path,
+        *,
+        binding_resolutions: dict[str, Any] | None = None,
+    ) -> None:
         self.source_root = Path(source_root).resolve()
-        self.target_root = Path(target_root).resolve()
+        self.target_root = Path(os.path.abspath(os.fspath(target_root)))
+        self.binding_resolutions = self._normalize_binding_resolutions(
+            binding_resolutions
+        )
+
+    @staticmethod
+    def _normalize_binding_resolutions(
+        value: dict[str, Any] | None,
+    ) -> dict[str, dict[str, str]]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict) or set(value) != {
+            "resolutions",
+            "schema_version",
+        }:
+            raise MultiAgentMigrationError("binding_resolution_invalid")
+        if value.get("schema_version") != BINDING_RESOLUTIONS_SCHEMA or not isinstance(
+            value.get("resolutions"), list
+        ):
+            raise MultiAgentMigrationError("binding_resolution_invalid")
+        result: dict[str, dict[str, str]] = {}
+        expected_keys = {
+            "outcome",
+            "reason_code",
+            "record_id",
+            "source_binding_sha256",
+        }
+        for resolution in value["resolutions"]:
+            if not isinstance(resolution, dict) or set(resolution) != expected_keys:
+                raise MultiAgentMigrationError("binding_resolution_invalid")
+            if (
+                resolution.get("outcome") != "retire"
+                or resolution.get("reason_code") != RETIRE_REASON
+                or not isinstance(resolution.get("record_id"), str)
+                or not re.fullmatch(
+                    r"[0-9a-f]{64}", str(resolution.get("source_binding_sha256", ""))
+                )
+            ):
+                raise MultiAgentMigrationError("binding_resolution_invalid")
+            record_id = resolution["record_id"]
+            if record_id in result:
+                raise MultiAgentMigrationError("binding_resolution_invalid")
+            result[record_id] = dict(resolution)
+        return result
 
     def preview(self) -> dict[str, Any]:
         """Build a side-effect-free multi-agent migration manifest."""
@@ -200,10 +265,11 @@ class MultiAgentMigration:
         source_refs = self._classify_source_refs(workspace_roots)
 
         snapshot_inputs = {
-            "config_sha256": _sha256_file(config_path),
-            "groups_sha256": _sha256_file(groups_path),
+            "authoritative_sources": [
+                _file_identity(path, self.source_root)
+                for path in (config_path, users_path, groups_path)
+            ],
             "source_refs": source_refs,
-            "users_sha256": _sha256_file(users_path),
         }
         snapshot_hex = _sha256_bytes(canonical_manifest_bytes(snapshot_inputs))
         review_items = [
@@ -259,7 +325,13 @@ class MultiAgentMigration:
             "group_profiles": sum(
                 record["profile_kind"] == "group" for record in profile_records
             ),
+            "materialized_bindings": sum(
+                record["action"] == "materialize" for record in binding_records
+            ),
             "profiles": len(profile_records),
+            "resolved_bindings": sum(
+                record["action"] == "resolved" for record in binding_records
+            ),
             "review_bindings": len(review_items),
             "user_profiles": sum(
                 record["profile_kind"] == "dm" for record in profile_records
@@ -424,6 +496,7 @@ class MultiAgentMigration:
     ) -> list[dict[str, str]]:
         profile_by_agent = {record["agent_id"]: record["profile_id"] for record in profiles}
         seen: dict[str, str] = {}
+        consumed_resolutions: set[str] = set()
         records: list[dict[str, str]] = []
         for index, binding in enumerate(bindings):
             if not isinstance(binding, dict):
@@ -439,14 +512,35 @@ class MultiAgentMigration:
                 raise MultiAgentMigrationError("binding_channel_unsupported")
             peer = match.get("peer")
             if not isinstance(peer, dict):
-                records.append(
-                    {
-                        "action": "review",
-                        "profile": profile_by_agent[agent_id],
-                        "reason": "channel-wide binding is outside registry v1 identity routes",
-                        "record_id": f"binding-{index:03d}",
-                    }
+                record_id = f"binding-{index:03d}"
+                source_binding_sha256 = _sha256_bytes(
+                    canonical_manifest_bytes(binding)
                 )
+                resolution = self.binding_resolutions.get(record_id)
+                if resolution is None:
+                    records.append(
+                        {
+                            "action": "review",
+                            "profile": profile_by_agent[agent_id],
+                            "reason": "channel-wide binding is outside registry v1 identity routes",
+                            "record_id": record_id,
+                            "source_binding_sha256": source_binding_sha256,
+                        }
+                    )
+                else:
+                    if resolution["source_binding_sha256"] != source_binding_sha256:
+                        raise MultiAgentMigrationError("binding_resolution_stale")
+                    consumed_resolutions.add(record_id)
+                    records.append(
+                        {
+                            "action": "resolved",
+                            "outcome": resolution["outcome"],
+                            "profile": profile_by_agent[agent_id],
+                            "reason_code": resolution["reason_code"],
+                            "record_id": record_id,
+                            "source_binding_sha256": source_binding_sha256,
+                        }
+                    )
                 continue
             kind = self._binding_kind(peer.get("kind"))
             raw_identity = peer.get("id")
@@ -480,16 +574,18 @@ class MultiAgentMigration:
                     "registry_key": registry_key,
                 }
             )
+        if consumed_resolutions != set(self.binding_resolutions):
+            raise MultiAgentMigrationError("binding_resolution_orphaned")
         return records
 
-    def _classify_source_refs(self, workspaces: dict[str, Path]) -> list[dict[str, str]]:
-        refs: dict[str, dict[str, str]] = {}
+    def _classify_source_refs(self, workspaces: dict[str, Path]) -> list[dict[str, Any]]:
+        refs: dict[str, dict[str, Any]] = {}
         for workspace in sorted(set(workspaces.values()), key=str):
             self._walk_workspace(workspace, refs)
         return [refs[key] for key in sorted(refs)]
 
     def _walk_workspace(
-        self, directory: Path, refs: dict[str, dict[str, str]]
+        self, directory: Path, refs: dict[str, dict[str, Any]]
     ) -> None:
         try:
             with os.scandir(directory) as scanner:
@@ -523,13 +619,13 @@ class MultiAgentMigration:
                     "relative_path": relative_path,
                 }
                 continue
-            size = entry.stat(follow_symlinks=False).st_size
+            identity = _file_identity(path, self.source_root)
+            size = identity["size"]
             if size > 1024 * 1024:
                 refs[relative_path] = {
                     "action": "review",
                     "classification": "large-file",
-                    "relative_path": relative_path,
-                    "size": str(size),
+                    **identity,
                 }
                 continue
             payload = path.read_bytes()
@@ -545,10 +641,159 @@ class MultiAgentMigration:
             refs[relative_path] = {
                 "action": action,
                 "classification": classification,
-                "relative_path": relative_path,
-                "sha256": _sha256_bytes(payload),
-                "size": str(size),
+                **identity,
             }
+
+    @staticmethod
+    def _safe_relative_target(value: Any) -> PurePosixPath:
+        if not isinstance(value, str) or not value:
+            raise MultiAgentMigrationError("manifest_invalid")
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute()
+            or not path.parts
+            or ".." in path.parts
+            or "." in path.parts
+        ):
+            raise MultiAgentMigrationError("manifest_invalid")
+        return path
+
+    def _has_symlink_component(self, path: Path) -> bool:
+        try:
+            relative = path.relative_to(self.target_root)
+        except ValueError as exc:
+            raise MultiAgentMigrationError("target_outside_root") from exc
+        probe = self.target_root
+        if os.path.lexists(probe) and probe.is_symlink():
+            return True
+        for part in relative.parts:
+            probe = probe / part
+            if os.path.lexists(probe) and probe.is_symlink():
+                return True
+        return False
+
+    @staticmethod
+    def _workspace_marker(
+        profile: dict[str, str], source_snapshot: str
+    ) -> dict[str, str]:
+        return {
+            "schema_version": WORKSPACE_MARKER_SCHEMA,
+            "source_snapshot": source_snapshot,
+            "source_workspace_ref": profile["source_workspace_ref"],
+        }
+
+    def _owned_profile_is_valid(
+        self, profile: dict[str, str], source_snapshot: str
+    ) -> bool:
+        root = self.target_root / profile["target_profile_root"]
+        workspace = root / "workspace"
+        profile_marker = root / ".hermes-openclaw-profile.json"
+        workspace_marker = workspace / ".hermes-openclaw-workspace.json"
+        controlled = [root, workspace, profile_marker, workspace_marker]
+        controlled.extend(root / relative for relative in _PROFILE_DIRS)
+        if any(self._has_symlink_component(path) for path in controlled):
+            return False
+        if not root.is_dir() or not workspace.is_dir():
+            return False
+        if any(not (root / relative).is_dir() for relative in _PROFILE_DIRS):
+            return False
+        try:
+            actual_profile = json.loads(profile_marker.read_text(encoding="utf-8"))
+            actual_workspace = json.loads(workspace_marker.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        expected_profile = {
+            "profile": profile["profile_id"],
+            "schema_version": PROFILE_MARKER_SCHEMA,
+            "source_snapshot": source_snapshot,
+            "source_workspace_ref": profile["source_workspace_ref"],
+        }
+        return (
+            actual_profile == expected_profile
+            and actual_workspace == self._workspace_marker(profile, source_snapshot)
+        )
+
+    def _restore_point_is_valid(
+        self,
+        root: Path,
+        profiles: list[dict[str, str]],
+        source_snapshot: str,
+    ) -> bool:
+        if self._has_symlink_component(root) or not root.is_dir():
+            return False
+        receipt_path = root / "receipt.json"
+        if self._has_symlink_component(receipt_path) or not receipt_path.is_file():
+            return False
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        expected_keys = {
+            "backup_sha256",
+            "created_profile_roots",
+            "had_manifest",
+            "had_registry",
+            "manifest_target",
+            "registry_target",
+            "schema_version",
+            "source_snapshot",
+        }
+        if not isinstance(receipt, dict) or set(receipt) != expected_keys:
+            return False
+        if (
+            receipt.get("schema_version") != RESTORE_POINT_SCHEMA
+            or receipt.get("source_snapshot") != source_snapshot
+            or receipt.get("manifest_target")
+            != "migration/openclaw/multi-agent-manifest.json"
+            or receipt.get("registry_target")
+            != "state/profile-identity-registry.json"
+            or not isinstance(receipt.get("created_profile_roots"), list)
+            or not isinstance(receipt.get("backup_sha256"), dict)
+        ):
+            return False
+        allowed_roots = {profile["target_profile_root"] for profile in profiles}
+        created_roots = receipt["created_profile_roots"]
+        if (
+            len(created_roots) != len(set(created_roots))
+            or not set(created_roots).issubset(allowed_roots)
+        ):
+            return False
+        backup_sha = receipt["backup_sha256"]
+        if set(backup_sha) != {"manifest", "registry"}:
+            return False
+        for label, had_key, filename in (
+            ("manifest", "had_manifest", "multi-agent-manifest.json"),
+            ("registry", "had_registry", "profile-identity-registry.json"),
+        ):
+            had_value = receipt.get(had_key)
+            digest = backup_sha.get(label)
+            backup = root / filename
+            if not isinstance(had_value, bool):
+                return False
+            if had_value:
+                if (
+                    not isinstance(digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or self._has_symlink_component(backup)
+                    or not backup.is_file()
+                    or _sha256_file(backup) != digest
+                ):
+                    return False
+            elif digest is not None or os.path.lexists(backup):
+                return False
+        allowed_entries = {
+            "receipt.json",
+            *(filename for filename in (
+                "multi-agent-manifest.json",
+                "profile-identity-registry.json",
+            ) if (root / filename).exists()),
+        }
+        try:
+            if {entry.name for entry in root.iterdir()} != allowed_entries:
+                return False
+        except OSError:
+            return False
+        return True
 
     def _preview_target_conflicts(
         self,
@@ -557,28 +802,44 @@ class MultiAgentMigration:
         source_snapshot: str,
     ) -> list[dict[str, str]]:
         conflicts: list[dict[str, str]] = []
+        snapshot_hex = source_snapshot.removeprefix("sha256:")
+        controlled_ancestors = [
+            self.target_root,
+            self.target_root / "profiles",
+            self.target_root / "state",
+            self.target_root / "migration",
+            self.target_root / "migration/openclaw",
+            self.target_root / "migration/openclaw/restore-points",
+            self.target_root / "migration/openclaw/restore-points" / snapshot_hex,
+        ]
         for profile in profiles:
             root = self.target_root / profile["target_profile_root"]
-            if not root.exists() and not root.is_symlink():
-                continue
-            marker_path = root / ".hermes-openclaw-profile.json"
-            if root.is_symlink() or marker_path.is_symlink():
-                marker = None
-            else:
+            controlled_ancestors.extend(
+                [
+                    root,
+                    root / "workspace",
+                    root / ".hermes-openclaw-profile.json",
+                    root / "workspace/.hermes-openclaw-workspace.json",
+                ]
+            )
+        symlink_targets: set[str] = set()
+        for path in controlled_ancestors:
+            if self._has_symlink_component(path):
                 try:
-                    marker = json.loads(marker_path.read_text(encoding="utf-8"))
-                except Exception:
-                    marker = None
-            if (
-                not isinstance(marker, dict)
-                or marker.get("schema_version") != PROFILE_MARKER_SCHEMA
-                or marker.get("profile") != profile["profile_id"]
-                or marker.get("source_snapshot") != source_snapshot
-                or marker.get("source_workspace_ref")
-                != profile["source_workspace_ref"]
-                or not (root / "workspace").is_dir()
-                or (root / "workspace").is_symlink()
-            ):
+                    target = path.relative_to(self.target_root).as_posix() or "."
+                except ValueError:
+                    target = "."
+                symlink_targets.add(target)
+        conflicts.extend(
+            {"code": "target_ancestor_symlink", "target": target}
+            for target in sorted(symlink_targets)
+        )
+
+        for profile in profiles:
+            root = self.target_root / profile["target_profile_root"]
+            if not os.path.lexists(root):
+                continue
+            if not self._owned_profile_is_valid(profile, source_snapshot):
                 conflicts.append(
                     {
                         "code": "target_profile_conflict",
@@ -631,11 +892,23 @@ class MultiAgentMigration:
                             }
                         )
         manifest_path = self.target_root / "migration/openclaw/multi-agent-manifest.json"
-        if manifest_path.is_symlink():
+        if self._has_symlink_component(manifest_path):
             conflicts.append(
                 {
                     "code": "target_manifest_invalid",
                     "target": "migration/openclaw/multi-agent-manifest.json",
+                }
+            )
+        restore_point = (
+            self.target_root / "migration/openclaw/restore-points" / snapshot_hex
+        )
+        if os.path.lexists(restore_point) and not self._restore_point_is_valid(
+            restore_point, profiles, source_snapshot
+        ):
+            conflicts.append(
+                {
+                    "code": "restore_point_invalid",
+                    "target": restore_point.relative_to(self.target_root).as_posix(),
                 }
             )
         return sorted(
@@ -643,10 +916,182 @@ class MultiAgentMigration:
             key=lambda item: (item["code"], item["target"], item.get("record_id", "")),
         )
 
-    def apply(self, manifest: dict[str, Any]) -> dict[str, str]:
-        """Apply one reviewed manifest, rolling back this call on failure."""
-        if manifest.get("schema_version") != MANIFEST_SCHEMA:
+    def _validate_manifest(self, manifest: Any) -> None:
+        expected_top_level = {
+            "binding_records",
+            "classified_source_refs",
+            "conflicts",
+            "counts",
+            "planned_target_refs",
+            "planned_writes",
+            "profile_records",
+            "review_items",
+            "schema_version",
+            "source_snapshot",
+        }
+        if (
+            not isinstance(manifest, dict)
+            or set(manifest) != expected_top_level
+            or manifest.get("schema_version") != MANIFEST_SCHEMA
+        ):
             raise MultiAgentMigrationError("manifest_invalid")
+        profiles = manifest.get("profile_records")
+        bindings = manifest.get("binding_records")
+        source_snapshot = manifest.get("source_snapshot")
+        if (
+            not isinstance(profiles, list)
+            or not isinstance(bindings, list)
+            or not isinstance(source_snapshot, dict)
+            or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(source_snapshot.get("id", ""))
+            )
+        ):
+            raise MultiAgentMigrationError("manifest_invalid")
+        profile_ids: set[str] = set()
+        for profile in profiles:
+            expected_keys = {
+                "agent_id",
+                "profile_id",
+                "profile_kind",
+                "source_workspace_ref",
+                "target_profile_root",
+                "target_workspace_root",
+            }
+            if not isinstance(profile, dict) or set(profile) != expected_keys:
+                raise MultiAgentMigrationError("manifest_invalid")
+            profile_id = profile.get("profile_id")
+            if (
+                not isinstance(profile_id, str)
+                or not _PROFILE_RE.fullmatch(profile_id)
+                or profile_id in profile_ids
+                or profile.get("profile_kind") not in {"dm", "group", "functional"}
+            ):
+                raise MultiAgentMigrationError("manifest_invalid")
+            profile_ids.add(profile_id)
+            profile_root = self._safe_relative_target(profile["target_profile_root"])
+            workspace_root = self._safe_relative_target(
+                profile["target_workspace_root"]
+            )
+            if (
+                profile_root != PurePosixPath("profiles") / profile_id
+                or workspace_root != profile_root / "workspace"
+            ):
+                raise MultiAgentMigrationError("manifest_invalid")
+            source_ref = PurePosixPath(str(profile.get("source_workspace_ref", "")))
+            if source_ref.is_absolute() or ".." in source_ref.parts or not source_ref.parts:
+                raise MultiAgentMigrationError("manifest_invalid")
+        record_ids: set[str] = set()
+        for record in bindings:
+            if not isinstance(record, dict) or not isinstance(record.get("action"), str):
+                raise MultiAgentMigrationError("manifest_invalid")
+            record_id = record.get("record_id")
+            if (
+                not isinstance(record_id, str)
+                or record_id in record_ids
+                or record.get("profile") not in profile_ids
+            ):
+                raise MultiAgentMigrationError("manifest_invalid")
+            record_ids.add(record_id)
+            action = record["action"]
+            if action == "materialize":
+                expected = {
+                    "action",
+                    "identity_digest",
+                    "kind",
+                    "platform",
+                    "profile",
+                    "record_id",
+                    "registry_key",
+                }
+                if (
+                    set(record) != expected
+                    or record.get("kind") not in {"dm", "group"}
+                    or record.get("platform") != "feishu"
+                    or not re.fullmatch(
+                        r"sha256:[0-9a-f]{64}", str(record.get("identity_digest", ""))
+                    )
+                    or record.get("registry_key")
+                    != f"feishu:{record.get('kind')}:{record.get('identity_digest')}"
+                ):
+                    raise MultiAgentMigrationError("manifest_invalid")
+            elif action == "review":
+                if set(record) != {
+                    "action",
+                    "profile",
+                    "reason",
+                    "record_id",
+                    "source_binding_sha256",
+                }:
+                    raise MultiAgentMigrationError("manifest_invalid")
+            elif action == "resolved":
+                if (
+                    set(record)
+                    != {
+                        "action",
+                        "outcome",
+                        "profile",
+                        "reason_code",
+                        "record_id",
+                        "source_binding_sha256",
+                    }
+                    or record.get("outcome") != "retire"
+                    or record.get("reason_code") != RETIRE_REASON
+                ):
+                    raise MultiAgentMigrationError("manifest_invalid")
+            else:
+                raise MultiAgentMigrationError("manifest_invalid")
+            if action in {"review", "resolved"} and not re.fullmatch(
+                r"[0-9a-f]{64}", str(record.get("source_binding_sha256", ""))
+            ):
+                raise MultiAgentMigrationError("manifest_invalid")
+        expected_counts = {
+            "bindings": len(bindings),
+            "functional_profiles": sum(
+                profile["profile_kind"] == "functional" for profile in profiles
+            ),
+            "group_profiles": sum(
+                profile["profile_kind"] == "group" for profile in profiles
+            ),
+            "materialized_bindings": sum(
+                record["action"] == "materialize" for record in bindings
+            ),
+            "profiles": len(profiles),
+            "resolved_bindings": sum(
+                record["action"] == "resolved" for record in bindings
+            ),
+            "review_bindings": sum(
+                record["action"] == "review" for record in bindings
+            ),
+            "user_profiles": sum(
+                profile["profile_kind"] == "dm" for profile in profiles
+            ),
+        }
+        if manifest.get("counts") != expected_counts:
+            raise MultiAgentMigrationError("manifest_invalid")
+        planned_target_refs = manifest.get("planned_target_refs")
+        planned_writes = manifest.get("planned_writes")
+        classified_refs = manifest.get("classified_source_refs")
+        if not all(
+            isinstance(value, list)
+            for value in (planned_target_refs, planned_writes, classified_refs)
+        ):
+            raise MultiAgentMigrationError("manifest_invalid")
+        for target in planned_target_refs:
+            self._safe_relative_target(target)
+        for write in planned_writes:
+            if not isinstance(write, dict) or set(write) != {"action", "target"}:
+                raise MultiAgentMigrationError("manifest_invalid")
+            self._safe_relative_target(write["target"])
+        for source_ref in classified_refs:
+            if not isinstance(source_ref, dict):
+                raise MultiAgentMigrationError("manifest_invalid")
+            path = PurePosixPath(str(source_ref.get("relative_path", "")))
+            if path.is_absolute() or ".." in path.parts or not path.parts:
+                raise MultiAgentMigrationError("manifest_invalid")
+
+    def apply(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        """Apply one reviewed manifest, rolling back this call on failure."""
+        self._validate_manifest(manifest)
         current = self.preview()
         if current["source_snapshot"]["id"] != manifest.get("source_snapshot", {}).get(
             "id"
@@ -654,6 +1099,10 @@ class MultiAgentMigration:
             raise MultiAgentMigrationError("source_drift")
         if manifest.get("conflicts") or current["conflicts"]:
             raise MultiAgentMigrationError("target_conflict")
+        if canonical_manifest_bytes(manifest) != canonical_manifest_bytes(current):
+            raise MultiAgentMigrationError("manifest_mismatch")
+        if current["review_items"] or current["counts"]["review_bindings"]:
+            raise MultiAgentMigrationError("binding_unresolved")
 
         desired_registry = self._desired_registry(manifest)
         self._preflight_targets(manifest, desired_registry)
@@ -703,6 +1152,10 @@ class MultiAgentMigration:
             raise MultiAgentMigrationError("apply_failed") from exc
 
         return {
+            "binding_outcomes": {
+                "materialized": manifest["counts"]["materialized_bindings"],
+                "resolved": manifest["counts"]["resolved_bindings"],
+            },
             "manifest": str(manifest_path),
             "restore_point": str(restore_point),
             "status": "applied",
@@ -740,24 +1193,21 @@ class MultiAgentMigration:
         self, manifest: dict[str, Any], desired_registry: dict[str, Any]
     ) -> None:
         del desired_registry
+        source_snapshot = manifest["source_snapshot"]["id"]
         for profile in manifest["profile_records"]:
             root = self.target_root / profile["target_profile_root"]
-            if not root.exists() and not root.is_symlink():
+            if not os.path.lexists(root):
                 continue
-            marker_path = root / ".hermes-openclaw-profile.json"
-            expected = self._profile_marker(profile, manifest)
-            if (
-                root.is_symlink()
-                or marker_path.is_symlink()
-                or (root / "workspace").is_symlink()
-            ):
+            if not self._owned_profile_is_valid(profile, source_snapshot):
                 raise MultiAgentMigrationError("target_profile_conflict")
-            try:
-                existing = json.loads(marker_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise MultiAgentMigrationError("target_profile_conflict") from exc
-            if existing != expected or not (root / "workspace").is_dir():
-                raise MultiAgentMigrationError("target_profile_conflict")
+        snapshot_hex = source_snapshot.removeprefix("sha256:")
+        restore_point = (
+            self.target_root / "migration/openclaw/restore-points" / snapshot_hex
+        )
+        if os.path.lexists(restore_point) and not self._restore_point_is_valid(
+            restore_point, manifest["profile_records"], source_snapshot
+        ):
+            raise MultiAgentMigrationError("restore_point_invalid")
 
     def _already_applied(
         self, manifest: dict[str, Any], desired_registry: dict[str, Any]
@@ -803,9 +1253,9 @@ class MultiAgentMigration:
                 canonical_manifest_bytes(self._profile_marker(profile, manifest)),
             )
             workspace_marker = {
-                "schema_version": WORKSPACE_MARKER_SCHEMA,
-                "source_snapshot": manifest["source_snapshot"]["id"],
-                "source_workspace_ref": profile["source_workspace_ref"],
+                **self._workspace_marker(
+                    profile, manifest["source_snapshot"]["id"]
+                )
             }
             self._atomic_write(
                 staging / "workspace/.hermes-openclaw-workspace.json",
@@ -836,6 +1286,18 @@ class MultiAgentMigration:
                     staging / "multi-agent-manifest.json", manifest_before
                 )
             receipt = {
+                "backup_sha256": {
+                    "manifest": (
+                        _sha256_bytes(manifest_before)
+                        if manifest_before is not None
+                        else None
+                    ),
+                    "registry": (
+                        _sha256_bytes(registry_before)
+                        if registry_before is not None
+                        else None
+                    ),
+                },
                 "created_profile_roots": [
                     profile["target_profile_root"]
                     for profile in manifest["profile_records"]
@@ -845,7 +1307,7 @@ class MultiAgentMigration:
                 "had_registry": registry_before is not None,
                 "manifest_target": "migration/openclaw/multi-agent-manifest.json",
                 "registry_target": "state/profile-identity-registry.json",
-                "schema_version": "hermes-openclaw-restore-point/v1",
+                "schema_version": RESTORE_POINT_SCHEMA,
                 "source_snapshot": manifest["source_snapshot"]["id"],
             }
             self._atomic_write(

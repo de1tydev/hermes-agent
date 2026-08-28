@@ -3131,6 +3131,10 @@ def parse_args() -> argparse.Namespace:
         "--manifest-input",
         help="Reviewed multi-agent manifest required by --multi-agent --execute",
     )
+    parser.add_argument(
+        "--binding-resolutions",
+        help="Canonical resolution JSON for multi-agent bindings that require review",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing Hermes targets after backing them up")
     parser.add_argument(
         "--migrate-secrets",
@@ -3330,11 +3334,18 @@ def run_multi_agent_migration(args: argparse.Namespace) -> int:
         canonical_manifest_bytes,
     )
 
-    migration = MultiAgentMigration(
-        Path(os.path.expanduser(args.source)),
-        Path(os.path.expanduser(args.target)),
-    )
     try:
+        binding_resolutions = None
+        if args.binding_resolutions:
+            resolution_path = Path(os.path.expanduser(args.binding_resolutions))
+            binding_resolutions = json.loads(
+                resolution_path.read_text(encoding="utf-8")
+            )
+        migration = MultiAgentMigration(
+            Path(os.path.expanduser(args.source)),
+            Path(os.path.expanduser(args.target)),
+            binding_resolutions=binding_resolutions,
+        )
         if args.execute:
             manifest_path = Path(os.path.expanduser(args.manifest_input))
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

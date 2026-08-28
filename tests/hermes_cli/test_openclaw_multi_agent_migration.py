@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -86,6 +88,25 @@ def build_source(root: Path) -> Path:
     return root
 
 
+def resolved_migration(source: Path, target: Path) -> MultiAgentMigration:
+    unresolved = MultiAgentMigration(source, target).preview()
+    review = next(
+        record for record in unresolved["binding_records"] if record["action"] == "review"
+    )
+    resolutions = {
+        "schema_version": "hermes-openclaw-binding-resolutions/v1",
+        "resolutions": [
+            {
+                "outcome": "retire",
+                "reason_code": "channel_wide_route_replaced_by_identity_routes",
+                "record_id": review["record_id"],
+                "source_binding_sha256": review["source_binding_sha256"],
+            }
+        ],
+    }
+    return MultiAgentMigration(source, target, binding_resolutions=resolutions)
+
+
 def test_preview_reconciles_exact_inventory_and_is_byte_stable(tmp_path):
     source = build_source(tmp_path / "source")
     migration = MultiAgentMigration(source, tmp_path / "target")
@@ -98,7 +119,9 @@ def test_preview_reconciles_exact_inventory_and_is_byte_stable(tmp_path):
         "bindings": 40,
         "functional_profiles": 2,
         "group_profiles": 14,
+        "materialized_bindings": 39,
         "profiles": 41,
+        "resolved_bindings": 0,
         "review_bindings": 1,
         "user_profiles": 25,
     }
@@ -116,7 +139,9 @@ def test_tracked_fixture_matches_frozen_inventory(tmp_path):
         "bindings": 40,
         "functional_profiles": 2,
         "group_profiles": 14,
+        "materialized_bindings": 39,
         "profiles": 41,
+        "resolved_bindings": 0,
         "review_bindings": 1,
         "user_profiles": 25,
     }
@@ -187,6 +212,30 @@ def test_denylist_and_secret_content_never_enter_payload(tmp_path):
     assert "private conversation" not in payload
     assert "synthetic-secret-value" not in payload
     assert "sk-synthetic-canary" not in payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"botToken":"synthetic-token-value"}',
+        b'{"authorization":"Bearer synthetic-token-value"}',
+    ],
+)
+def test_common_secret_spellings_are_excluded(tmp_path, payload):
+    source = build_source(tmp_path / "source")
+    note = source / "workspaces/dm-agent-00/operator-notes.json"
+    note.write_bytes(payload)
+
+    manifest = MultiAgentMigration(source, tmp_path / "target").preview()
+    ref = next(
+        item
+        for item in manifest["classified_source_refs"]
+        if item["relative_path"].endswith("operator-notes.json")
+    )
+
+    assert ref["classification"] == "secret-content"
+    assert ref["action"] == "exclude"
+    assert "synthetic-token-value" not in canonical_manifest_bytes(manifest).decode()
 
 
 def test_symlink_is_reviewed_and_never_followed(tmp_path):
@@ -283,10 +332,46 @@ def test_apply_rejects_source_drift_without_writes(tmp_path):
     assert not target.exists()
 
 
-def test_apply_materializes_profiles_registry_restore_point_and_is_idempotent(tmp_path):
+def test_apply_refuses_unresolved_binding_without_target_writes(tmp_path):
     source = build_source(tmp_path / "source")
     target = tmp_path / "target"
     migration = MultiAgentMigration(source, target)
+    manifest = migration.preview()
+
+    with pytest.raises(MultiAgentMigrationError, match="binding_unresolved"):
+        migration.apply(manifest)
+    assert not target.exists()
+
+
+def test_canonical_binding_resolution_closes_all_40_outcomes(tmp_path):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+
+    assert manifest["counts"]["bindings"] == 40
+    assert manifest["counts"]["materialized_bindings"] == 39
+    assert manifest["counts"]["resolved_bindings"] == 1
+    assert manifest["counts"]["review_bindings"] == 0
+    assert len(manifest["binding_records"]) == 40
+    resolved = next(
+        record for record in manifest["binding_records"] if record["action"] == "resolved"
+    )
+    assert resolved["outcome"] == "retire"
+
+    result = migration.apply(manifest)
+
+    assert result["status"] == "applied"
+    assert result["binding_outcomes"] == {
+        "materialized": 39,
+        "resolved": 1,
+    }
+
+
+def test_apply_materializes_profiles_registry_restore_point_and_is_idempotent(tmp_path):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
     manifest = migration.preview()
 
     first = migration.apply(manifest)
@@ -317,7 +402,7 @@ def test_apply_rolls_back_all_target_changes_on_failure(tmp_path, monkeypatch):
     target.mkdir()
     sentinel = target / "sentinel.txt"
     sentinel.write_text("before\n", encoding="utf-8")
-    migration = MultiAgentMigration(source, target)
+    migration = resolved_migration(source, target)
     manifest = migration.preview()
 
     def fail_after_first_write(*_args, **_kwargs):
@@ -330,6 +415,133 @@ def test_apply_rolls_back_all_target_changes_on_failure(tmp_path, monkeypatch):
     assert sentinel.read_text(encoding="utf-8") == "before\n"
     assert not (target / "profiles").exists()
     assert not (target / "state/profile-identity-registry.json").exists()
+
+
+def test_manifest_binding_tamper_is_rejected_before_writes(tmp_path):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+    materialized = next(
+        record for record in manifest["binding_records"] if record["action"] == "materialize"
+    )
+    materialized["profile"] = "main"
+
+    with pytest.raises(MultiAgentMigrationError, match="manifest_mismatch"):
+        migration.apply(manifest)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("mutation", ["delete", "insert"])
+def test_manifest_binding_cardinality_tamper_is_rejected(tmp_path, mutation):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+    if mutation == "delete":
+        manifest["binding_records"].pop()
+    else:
+        manifest["binding_records"].append(dict(manifest["binding_records"][0]))
+
+    with pytest.raises(MultiAgentMigrationError, match="manifest_invalid"):
+        migration.apply(manifest)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("escape", ["../escaped-profile", "/tmp/escaped-profile"])
+def test_manifest_target_escape_is_rejected_before_writes(tmp_path, escape):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+    manifest["profile_records"][0]["target_profile_root"] = escape
+
+    with pytest.raises(MultiAgentMigrationError, match="manifest_invalid"):
+        migration.apply(manifest)
+    assert not target.exists()
+    assert not (tmp_path / "escaped-profile").exists()
+
+
+@pytest.mark.parametrize("ancestor", ["profiles", "state", "migration"])
+def test_target_ancestor_symlink_is_rejected_without_external_write(tmp_path, ancestor):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    outside = tmp_path / f"outside-{ancestor}"
+    target.mkdir()
+    outside.mkdir()
+    (target / ancestor).symlink_to(outside, target_is_directory=True)
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+
+    assert any(conflict["code"] == "target_ancestor_symlink" for conflict in manifest["conflicts"])
+    with pytest.raises(MultiAgentMigrationError, match="target_conflict"):
+        migration.apply(manifest)
+    assert list(outside.iterdir()) == []
+
+
+def test_existing_profile_without_workspace_marker_is_rejected(tmp_path):
+    source = build_source(tmp_path / "source")
+    owned_target = tmp_path / "owned-target"
+    owned = resolved_migration(source, owned_target)
+    owned_manifest = owned.preview()
+    owned.apply(owned_manifest)
+    profile = owned_manifest["profile_records"][0]
+
+    target = tmp_path / "target"
+    profile_root = target / profile["target_profile_root"]
+    profile_root.parent.mkdir(parents=True)
+    shutil.copytree(owned_target / profile["target_profile_root"], profile_root)
+    (profile_root / "workspace/.hermes-openclaw-workspace.json").unlink()
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+
+    assert any(conflict["code"] == "target_profile_conflict" for conflict in manifest["conflicts"])
+    with pytest.raises(MultiAgentMigrationError, match="target_conflict"):
+        migration.apply(manifest)
+    assert not (target / "state/profile-identity-registry.json").exists()
+
+
+def test_fake_incomplete_restore_point_is_rejected_before_writes(tmp_path):
+    source = build_source(tmp_path / "source")
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+    snapshot = manifest["source_snapshot"]["id"].removeprefix("sha256:")
+    restore = target / "migration/openclaw/restore-points" / snapshot
+    restore.mkdir(parents=True)
+    (restore / "unowned.txt").write_text("collision", encoding="utf-8")
+
+    manifest = migration.preview()
+
+    assert any(conflict["code"] == "restore_point_invalid" for conflict in manifest["conflicts"])
+    with pytest.raises(MultiAgentMigrationError, match="target_conflict"):
+        migration.apply(manifest)
+    assert not (target / "profiles").exists()
+    assert not (target / "state/profile-identity-registry.json").exists()
+
+
+def test_same_size_large_file_replacement_changes_snapshot_and_rejects_apply(tmp_path):
+    source = build_source(tmp_path / "source")
+    large = source / "workspaces/main/review.bin"
+    large.write_bytes(b"A" * (1024 * 1024 + 1))
+    target = tmp_path / "target"
+    migration = resolved_migration(source, target)
+    manifest = migration.preview()
+    original_stat = large.stat()
+    large.write_bytes(b"B" * original_stat.st_size)
+    os.utime(large, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    replacement = migration.preview()
+    ref = next(
+        item for item in replacement["classified_source_refs"] if item["relative_path"].endswith("review.bin")
+    )
+
+    assert ref["classification"] == "large-file"
+    assert "sha256" in ref and "mtime_ns" in ref
+    assert replacement["source_snapshot"]["id"] != manifest["source_snapshot"]["id"]
+    with pytest.raises(MultiAgentMigrationError, match="source_drift"):
+        migration.apply(manifest)
+    assert not target.exists()
 
 
 def test_cli_dry_run_is_zero_write_and_apply_requires_reviewed_manifest(tmp_path):
@@ -376,8 +588,45 @@ def test_cli_dry_run_is_zero_write_and_apply_requires_reviewed_manifest(tmp_path
     assert rejected.returncode == 2
     assert "manifest-input" in rejected.stdout
 
+    review = next(
+        record for record in manifest["binding_records"] if record["action"] == "review"
+    )
+    resolutions = {
+        "schema_version": "hermes-openclaw-binding-resolutions/v1",
+        "resolutions": [
+            {
+                "outcome": "retire",
+                "reason_code": "channel_wide_route_replaced_by_identity_routes",
+                "record_id": review["record_id"],
+                "source_binding_sha256": review["source_binding_sha256"],
+            }
+        ],
+    }
+    resolution_path = tmp_path / "binding-resolutions.json"
+    resolution_path.write_text(json.dumps(resolutions), encoding="utf-8")
+    resolved_preview = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--source",
+            str(source),
+            "--target",
+            str(target),
+            "--multi-agent",
+            "--dry-run",
+            "--binding-resolutions",
+            str(resolution_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    resolved_manifest = json.loads(resolved_preview.stdout)
+    assert resolved_manifest["counts"]["review_bindings"] == 0
+    assert resolved_manifest["counts"]["resolved_bindings"] == 1
+
     manifest_path = tmp_path / "reviewed-manifest.json"
-    manifest_path.write_bytes(canonical_manifest_bytes(manifest))
+    manifest_path.write_bytes(canonical_manifest_bytes(resolved_manifest))
     applied = subprocess.run(
         [
             sys.executable,
@@ -390,6 +639,8 @@ def test_cli_dry_run_is_zero_write_and_apply_requires_reviewed_manifest(tmp_path
             "--execute",
             "--manifest-input",
             str(manifest_path),
+            "--binding-resolutions",
+            str(resolution_path),
         ],
         check=True,
         capture_output=True,
