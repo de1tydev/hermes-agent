@@ -1,0 +1,568 @@
+{
+  "agents": {
+    "list": [
+      {
+        "id": "dm-agent-00",
+        "workspace": "workspaces/dm-agent-00"
+      },
+      {
+        "id": "dm-agent-01",
+        "workspace": "workspaces/dm-agent-01"
+      },
+      {
+        "id": "dm-agent-02",
+        "workspace": "workspaces/dm-agent-02"
+      },
+      {
+        "id": "dm-agent-03",
+        "workspace": "workspaces/dm-agent-03"
+      },
+      {
+        "id": "dm-agent-04",
+        "workspace": "workspaces/dm-agent-04"
+      },
+      {
+        "id": "dm-agent-05",
+        "workspace": "workspaces/dm-agent-05"
+      },
+      {
+        "id": "dm-agent-06",
+        "workspace": "workspaces/dm-agent-06"
+      },
+      {
+        "id": "dm-agent-07",
+        "workspace": "workspaces/dm-agent-07"
+      },
+      {
+        "id": "dm-agent-08",
+        "workspace": "workspaces/dm-agent-08"
+      },
+      {
+        "id": "dm-agent-09",
+        "workspace": "workspaces/dm-agent-09"
+      },
+      {
+        "id": "dm-agent-10",
+        "workspace": "workspaces/dm-agent-10"
+      },
+      {
+        "id": "dm-agent-11",
+        "workspace": "workspaces/dm-agent-11"
+      },
+      {
+        "id": "dm-agent-12",
+        "workspace": "workspaces/dm-agent-12"
+      },
+      {
+        "id": "dm-agent-13",
+        "workspace": "workspaces/dm-agent-13"
+      },
+      {
+        "id": "dm-agent-14",
+        "workspace": "workspaces/dm-agent-14"
+      },
+      {
+        "id": "dm-agent-15",
+        "workspace": "workspaces/dm-agent-15"
+      },
+      {
+        "id": "dm-agent-16",
+        "workspace": "workspaces/dm-agent-16"
+      },
+      {
+        "id": "dm-agent-17",
+        "workspace": "workspaces/dm-agent-17"
+      },
+      {
+        "id": "dm-agent-18",
+        "workspace": "workspaces/dm-agent-18"
+      },
+      {
+        "id": "dm-agent-19",
+        "workspace": "workspaces/dm-agent-19"
+      },
+      {
+        "id": "dm-agent-20",
+        "workspace": "workspaces/dm-agent-20"
+      },
+      {
+        "id": "dm-agent-21",
+        "workspace": "workspaces/dm-agent-21"
+      },
+      {
+        "id": "dm-agent-22",
+        "workspace": "workspaces/dm-agent-22"
+      },
+      {
+        "id": "dm-agent-23",
+        "workspace": "workspaces/dm-agent-23"
+      },
+      {
+        "id": "dm-agent-24",
+        "workspace": "workspaces/dm-agent-24"
+      },
+      {
+        "id": "group-agent-00",
+        "workspace": "workspaces/group-agent-00"
+      },
+      {
+        "id": "group-agent-01",
+        "workspace": "workspaces/group-agent-01"
+      },
+      {
+        "id": "group-agent-02",
+        "workspace": "workspaces/group-agent-02"
+      },
+      {
+        "id": "group-agent-03",
+        "workspace": "workspaces/group-agent-03"
+      },
+      {
+        "id": "group-agent-04",
+        "workspace": "workspaces/group-agent-04"
+      },
+      {
+        "id": "group-agent-05",
+        "workspace": "workspaces/group-agent-05"
+      },
+      {
+        "id": "group-agent-06",
+        "workspace": "workspaces/group-agent-06"
+      },
+      {
+        "id": "group-agent-07",
+        "workspace": "workspaces/group-agent-07"
+      },
+      {
+        "id": "group-agent-08",
+        "workspace": "workspaces/group-agent-08"
+      },
+      {
+        "id": "group-agent-09",
+        "workspace": "workspaces/group-agent-09"
+      },
+      {
+        "id": "group-agent-10",
+        "workspace": "workspaces/group-agent-10"
+      },
+      {
+        "id": "group-agent-11",
+        "workspace": "workspaces/group-agent-11"
+      },
+      {
+        "id": "group-agent-12",
+        "workspace": "workspaces/group-agent-12"
+      },
+      {
+        "id": "group-agent-13",
+        "workspace": "workspaces/group-agent-13"
+      },
+      {
+        "id": "main",
+        "workspace": "workspaces/main"
+      },
+      {
+        "id": "power-knowledge",
+        "workspace": "workspaces/power-knowledge"
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agentId": "dm-agent-00",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-00"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-01",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-01"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-02",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-02"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-03",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-03"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-04",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-04"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-05",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-05"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-06",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-06"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-07",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-07"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-08",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-08"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-09",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-09"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-10",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-10"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-11",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-11"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-12",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-12"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-13",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-13"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-14",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-14"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-15",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-15"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-16",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-16"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-17",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-17"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-18",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-18"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-19",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-19"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-20",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-20"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-21",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-21"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-22",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-22"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-23",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-23"
+        }
+      }
+    },
+    {
+      "agentId": "dm-agent-24",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "direct",
+          "id": "synthetic-user-24"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-00",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-00"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-01",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-01"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-02",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-02"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-03",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-03"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-04",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-04"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-05",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-05"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-06",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-06"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-07",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-07"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-08",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-08"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-09",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-09"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-10",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-10"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-11",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-11"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-12",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-12"
+        }
+      }
+    },
+    {
+      "agentId": "group-agent-13",
+      "match": {
+        "channel": "feishu",
+        "peer": {
+          "kind": "group",
+          "id": "synthetic-group-13"
+        }
+      }
+    },
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "feishu"
+      }
+    }
+  ]
+}

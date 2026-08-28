@@ -1,0 +1,61 @@
+{
+  "schema_version": "openclaw-automation-group-registry/v1",
+  "entries": [
+    {
+      "agent_id": "group-agent-00",
+      "identity": "synthetic-group-00"
+    },
+    {
+      "agent_id": "group-agent-01",
+      "identity": "synthetic-group-01"
+    },
+    {
+      "agent_id": "group-agent-02",
+      "identity": "synthetic-group-02"
+    },
+    {
+      "agent_id": "group-agent-03",
+      "identity": "synthetic-group-03"
+    },
+    {
+      "agent_id": "group-agent-04",
+      "identity": "synthetic-group-04"
+    },
+    {
+      "agent_id": "group-agent-05",
+      "identity": "synthetic-group-05"
+    },
+    {
+      "agent_id": "group-agent-06",
+      "identity": "synthetic-group-06"
+    },
+    {
+      "agent_id": "group-agent-07",
+      "identity": "synthetic-group-07"
+    },
+    {
+      "agent_id": "group-agent-08",
+      "identity": "synthetic-group-08"
+    },
+    {
+      "agent_id": "group-agent-09",
+      "identity": "synthetic-group-09"
+    },
+    {
+      "agent_id": "group-agent-10",
+      "identity": "synthetic-group-10"
+    },
+    {
+      "agent_id": "group-agent-11",
+      "identity": "synthetic-group-11"
+    },
+    {
+      "agent_id": "group-agent-12",
+      "identity": "synthetic-group-12"
+    },
+    {
+      "agent_id": "group-agent-13",
+      "identity": "synthetic-group-13"
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "schema_version": "openclaw-automation-user-registry/v1",
+  "entries": [
+    {
+      "agent_id": "dm-agent-00",
+      "identity": "synthetic-user-00"
+    },
+    {
+      "agent_id": "dm-agent-01",
+      "identity": "synthetic-user-01"
+    },
+    {
+      "agent_id": "dm-agent-02",
+      "identity": "synthetic-user-02"
+    },
+    {
+      "agent_id": "dm-agent-03",
+      "identity": "synthetic-user-03"
+    },
+    {
+      "agent_id": "dm-agent-04",
+      "identity": "synthetic-user-04"
+    },
+    {
+      "agent_id": "dm-agent-05",
+      "identity": "synthetic-user-05"
+    },
+    {
+      "agent_id": "dm-agent-06",
+      "identity": "synthetic-user-06"
+    },
+    {
+      "agent_id": "dm-agent-07",
+      "identity": "synthetic-user-07"
+    },
+    {
+      "agent_id": "dm-agent-08",
+      "identity": "synthetic-user-08"
+    },
+    {
+      "agent_id": "dm-agent-09",
+      "identity": "synthetic-user-09"
+    },
+    {
+      "agent_id": "dm-agent-10",
+      "identity": "synthetic-user-10"
+    },
+    {
+      "agent_id": "dm-agent-11",
+      "identity": "synthetic-user-11"
+    },
+    {
+      "agent_id": "dm-agent-12",
+      "identity": "synthetic-user-12"
+    },
+    {
+      "agent_id": "dm-agent-13",
+      "identity": "synthetic-user-13"
+    },
+    {
+      "agent_id": "dm-agent-14",
+      "identity": "synthetic-user-14"
+    },
+    {
+      "agent_id": "dm-agent-15",
+      "identity": "synthetic-user-15"
+    },
+    {
+      "agent_id": "dm-agent-16",
+      "identity": "synthetic-user-16"
+    },
+    {
+      "agent_id": "dm-agent-17",
+      "identity": "synthetic-user-17"
+    },
+    {
+      "agent_id": "dm-agent-18",
+      "identity": "synthetic-user-18"
+    },
+    {
+      "agent_id": "dm-agent-19",
+      "identity": "synthetic-user-19"
+    },
+    {
+      "agent_id": "dm-agent-20",
+      "identity": "synthetic-user-20"
+    },
+    {
+      "agent_id": "dm-agent-21",
+      "identity": "synthetic-user-21"
+    },
+    {
+      "agent_id": "dm-agent-22",
+      "identity": "synthetic-user-22"
+    },
+    {
+      "agent_id": "dm-agent-23",
+      "identity": "synthetic-user-23"
+    },
+    {
+      "agent_id": "dm-agent-24",
+      "identity": "synthetic-user-24"
+    }
+  ]
+}

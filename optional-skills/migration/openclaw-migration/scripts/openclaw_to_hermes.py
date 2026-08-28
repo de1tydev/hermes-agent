@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -3116,6 +3117,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional workspace root where the workspace instructions file should be copied",
     )
     parser.add_argument("--execute", action="store_true", help="Apply changes instead of reporting a dry run")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the opt-in multi-agent profile manifest without writing the target",
+    )
+    parser.add_argument(
+        "--multi-agent",
+        action="store_true",
+        help="Use the opt-in multi-agent profile manifest workflow",
+    )
+    parser.add_argument(
+        "--manifest-input",
+        help="Reviewed multi-agent manifest required by --multi-agent --execute",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing Hermes targets after backing them up")
     parser.add_argument(
         "--migrate-secrets",
@@ -3160,6 +3175,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.dry_run or args.multi_agent:
+        return run_multi_agent_migration(args)
     try:
         selected_options = resolve_selected_options(args.include, args.exclude, preset=args.preset)
     except ValueError as exc:
@@ -3280,6 +3297,57 @@ def main() -> int:
         print(json.dumps(report, indent=2, ensure_ascii=False))
 
     return 0 if s.get("error", 0) == 0 else 1
+
+
+def run_multi_agent_migration(args: argparse.Namespace) -> int:
+    """Run the explicit preview/apply multi-agent path.
+
+    Keeping this branch ahead of ``Migrator`` construction preserves every
+    existing single-workspace invocation and avoids its timestamped output
+    directory behavior during a zero-write preview.
+    """
+    if args.dry_run and args.execute:
+        print(json.dumps({"error": "--dry-run cannot be combined with --execute"}))
+        return 2
+    if args.execute and not args.manifest_input:
+        print(
+            json.dumps(
+                {"error": "--multi-agent --execute requires --manifest-input"},
+                sort_keys=True,
+            )
+        )
+        return 2
+
+    # An installed optional skill imports from the installed Hermes package. A
+    # repository checkout invoked directly does not necessarily have its root on
+    # sys.path, so prefer the adjacent source tree when it is present.
+    repository_root = Path(__file__).resolve().parents[4]
+    if (repository_root / "hermes_cli/openclaw_multi_agent_migration.py").is_file():
+        sys.path.insert(0, str(repository_root))
+    from hermes_cli.openclaw_multi_agent_migration import (
+        MultiAgentMigration,
+        MultiAgentMigrationError,
+        canonical_manifest_bytes,
+    )
+
+    migration = MultiAgentMigration(
+        Path(os.path.expanduser(args.source)),
+        Path(os.path.expanduser(args.target)),
+    )
+    try:
+        if args.execute:
+            manifest_path = Path(os.path.expanduser(args.manifest_input))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            result = migration.apply(manifest)
+            print(json.dumps(result, sort_keys=True, indent=2))
+        else:
+            manifest = migration.preview()
+            sys.stdout.buffer.write(canonical_manifest_bytes(manifest))
+    except (MultiAgentMigrationError, OSError, ValueError, json.JSONDecodeError) as exc:
+        code = getattr(exc, "code", "multi_agent_migration_failed")
+        print(json.dumps({"error": code}, sort_keys=True))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -31,6 +31,30 @@ The CLI command runs the same migration script described below. Use this skill (
 
 **First-time setup:** The `hermes setup` wizard automatically detects `~/.openclaw` and offers migration before configuration begins.
 
+## 多 Agent Profile 迁移（显式启用）
+
+多 Agent 迁移与原有单 workspace 流程相互独立，默认行为不变。先生成不可变
+manifest 并人工审阅，再把同一份 manifest 用于 apply：
+
+```bash
+python scripts/openclaw_to_hermes.py \
+  --source /path/to/.openclaw \
+  --target /path/to/.hermes-staging \
+  --dry-run > reviewed-manifest.json
+
+python scripts/openclaw_to_hermes.py \
+  --source /path/to/.openclaw \
+  --target /path/to/.hermes-staging \
+  --multi-agent --execute \
+  --manifest-input reviewed-manifest.json
+```
+
+`--dry-run` 对目标目录零写入。manifest 只保留 DM/group identity 摘要、Profile、
+binding、相对 source/target ref、分类和内容哈希，不保存原始 user/chat ID 或文件内容。
+session、trajectory、checkpoint、auth profile、secret、SQLite index、media、log、cache、
+build dependency 一律排除；符号链接只进入人工 review，不跟随。apply 前会重新生成
+source snapshot，发现漂移即失败；成功 apply 会建立 restore point，重复执行保持幂等。
+
 ## What this skill does
 
 It uses `scripts/openclaw_to_hermes.py` to:
