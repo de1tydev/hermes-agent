@@ -107,6 +107,47 @@ async def test_first_contact_uses_one_profile_namespace_end_to_end(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path):
+    import yaml
+
+    runner = _runner(tmp_path)
+    source = _dm("ou_safe_capabilities")
+    (tmp_path / "config.yaml").write_text(
+        "model:\n  default: model-a\n  provider: tode\n"
+        "providers:\n  tode:\n    key_env: OPENAI_API_KEY\n"
+        "terminal:\n  cwd: /opt/data/workspace\n"
+        "gateway:\n  multiplex_profiles: true\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=provider-secret\n"
+        "FEISHU_APP_ID=transport-id\n"
+        "FEISHU_APP_SECRET=transport-secret\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "shared-skills/example").mkdir(parents=True)
+    (tmp_path / "shared-skills/example/SKILL.md").write_text(
+        "# Example\n", encoding="utf-8"
+    )
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(source) is source
+
+    profile = tmp_path / "profiles" / source.profile
+    env_text = (profile / ".env").read_text(encoding="utf-8")
+    assert env_text == "OPENAI_API_KEY=provider-secret\n"
+    assert "FEISHU" not in env_text
+    config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+    assert "gateway" not in config
+    assert config["model"] == {"default": "model-a", "provider": "tode"}
+    assert config["terminal"]["cwd"] == str(profile / "workspace")
+    assert (profile / "skills/example/SKILL.md").is_file()
+
+
+@pytest.mark.asyncio
 async def test_authorized_unknown_group_uses_chat_identity(tmp_path):
     runner = _runner(tmp_path)
     first = _group()

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -52,6 +53,17 @@ class ProfileIdentityRegistry:
     LOCK_RELATIVE_PATH = Path("state/profile-identity-registry.lock")
     CLAIMS_RELATIVE_PATH = Path("state/profile-provision-claims")
     MARKER_FILENAME = ".hermes-auto-profile.json"
+    _PROFILE_SECRET_ALLOWLIST = frozenset(
+        {
+            "ANTHROPIC_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "TODE_API_KEY",
+            "XAI_API_KEY",
+        }
+    )
 
     def __init__(self, primary_home: Path) -> None:
         self.primary_home = Path(primary_home)
@@ -296,6 +308,7 @@ class ProfileIdentityRegistry:
             if existing_claim is None:
                 self._atomic_write_json(claim_path, creating_claim)
             create_profile(profile, no_alias=True)
+            self._seed_profile_capabilities(profile_dir)
             self._atomic_write_json(claim_path, materialized_claim)
             self._atomic_write_json(marker_path, marker)
         except ProfileProvisionRejected:
@@ -304,6 +317,77 @@ class ProfileIdentityRegistry:
             raise ProfileProvisionRejected(
                 "profile_create_failed", f"could not create profile {profile!r}"
             ) from exc
+
+    def _seed_profile_capabilities(self, profile_dir: Path) -> None:
+        """Copy safe runtime capabilities without transport credentials.
+
+        Auto-provisioned profiles need the same model/provider configuration as
+        the primary gateway, but copying the root ``.env`` wholesale would put
+        Feishu credentials inside every profile. Only the narrow provider-key
+        allowlist is copied, and the profile working directory is rewritten to
+        its own workspace before publication.
+        """
+        config_path = self.primary_home / "config.yaml"
+        if config_path.is_file() and not config_path.is_symlink():
+            import yaml
+
+            try:
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            except Exception as exc:
+                raise ProfileProvisionRejected(
+                    "profile_template_invalid", "primary config is unreadable"
+                ) from exc
+            if not isinstance(config, dict):
+                raise ProfileProvisionRejected(
+                    "profile_template_invalid", "primary config is not an object"
+                )
+            config = dict(config)
+            config.pop("gateway", None)
+            terminal = config.get("terminal")
+            if not isinstance(terminal, dict):
+                terminal = {}
+                config["terminal"] = terminal
+            else:
+                terminal = dict(terminal)
+                config["terminal"] = terminal
+            terminal["cwd"] = str(profile_dir / "workspace")
+            from utils import atomic_yaml_write
+
+            atomic_yaml_write(profile_dir / "config.yaml", config, create_mode=0o600)
+
+        allowed_lines: list[str] = []
+        env_path = self.primary_home / ".env"
+        if env_path.is_file() and not env_path.is_symlink():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                name, value = stripped.split("=", 1)
+                if name.strip() in self._PROFILE_SECRET_ALLOWLIST:
+                    allowed_lines.append(f"{name.strip()}={value}")
+        env_payload = ("\n".join(allowed_lines) + ("\n" if allowed_lines else "")).encode()
+        self._atomic_write_bytes(profile_dir / ".env", env_payload, mode=0o600)
+
+        soul_path = self.primary_home / "SOUL.md"
+        if soul_path.is_file() and not soul_path.is_symlink():
+            self._atomic_write_bytes(
+                profile_dir / "SOUL.md", soul_path.read_bytes(), mode=0o600
+            )
+
+        skills_source = self.primary_home / "shared-skills"
+        if not skills_source.is_dir():
+            skills_source = self.primary_home / "skills"
+        if skills_source.is_dir() and not skills_source.is_symlink():
+            if any(path.is_symlink() for path in skills_source.rglob("*")):
+                raise ProfileProvisionRejected(
+                    "profile_template_invalid", "primary skills contain a symlink"
+                )
+            shutil.copytree(
+                skills_source,
+                profile_dir / "skills",
+                dirs_exist_ok=True,
+                symlinks=False,
+            )
 
     def _claim_path(self, digest: str) -> Path:
         digest_hex = digest.removeprefix("sha256:")
@@ -368,6 +452,28 @@ class ProfileIdentityRegistry:
                 os.fsync(dir_fd)
             finally:
                 os.close(dir_fd)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _atomic_write_bytes(path: Path, payload: bytes, *, mode: int) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex}.tmp")
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_path, mode)
+            os.replace(tmp_path, path)
+            os.chmod(path, mode)
         finally:
             if fd >= 0:
                 os.close(fd)
