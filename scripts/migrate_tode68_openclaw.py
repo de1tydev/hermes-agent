@@ -709,7 +709,8 @@ def yaml_string(value: str) -> str:
 
 
 def profile_config(profile: str) -> str:
-    return f"""model:
+    return f"""_config_version: 12
+model:
   default: deepseek-v4-flash
   provider: tode
 providers:

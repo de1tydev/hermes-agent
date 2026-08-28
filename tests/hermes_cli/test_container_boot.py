@@ -286,6 +286,24 @@ def test_main_skips_reconcile_in_dashboard_container_s6v3(
     assert "skipping (dashboard container" in capsys.readouterr().out
 
 
+def test_secondary_gateway_can_skip_shared_home_reconcile(tmp_path, monkeypatch, capsys):
+    from hermes_cli import container_boot
+
+    scandir = tmp_path / "run-service"
+    scandir.mkdir()
+    _make_profile(tmp_path, "worker", state="running")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("S6_PROFILE_GATEWAY_SCANDIR", str(scandir))
+    monkeypatch.setenv("HERMES_CONTAINER_SKIP_PROFILE_RECONCILE", "true")
+
+    rc = container_boot.main()
+
+    assert rc == 0
+    assert not (scandir / "gateway-worker").exists()
+    assert not (scandir / "gateway-default").exists()
+    assert "skipping (explicit secondary gateway" in capsys.readouterr().out
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +315,6 @@ def _write_lifecycle_sentinel(profile_dir: Path, payload: dict) -> None:
     state_dir = profile_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "gateway.lifecycle.json").write_text(json.dumps(payload))
-
 
 
 

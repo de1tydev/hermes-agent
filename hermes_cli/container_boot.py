@@ -582,6 +582,11 @@ _LOG_ROTATE_BYTES = 256 * 1024
 
 def main() -> int:
     """Entry point invoked from /etc/cont-init.d/02-reconcile-profiles."""
+    from utils import is_truthy_value
+
+    if is_truthy_value(os.environ.get("HERMES_CONTAINER_SKIP_PROFILE_RECONCILE")):
+        print("reconcile: skipping (explicit secondary gateway process)")
+        return 0
     # A dashboard-only container never spawns or supervises per-profile
     # gateways, so reconciling their s6 slots here is pure waste — and
     # actively harmful: when the gateway and dashboard containers share a
