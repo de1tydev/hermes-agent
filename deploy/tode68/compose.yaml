@@ -11,6 +11,7 @@ x-hermes-gateway: &hermes-gateway
     HERMES_UID: "10000"
     HERMES_GID: "10000"
     GATEWAY_MULTIPLEX_PROFILES: "true"
+    HERMES_GATEWAY_LOCK_DIR: /opt/data/state/gateway-locks-primary
   command: ["gateway", "run"]
   healthcheck:
     test: ["CMD-SHELL", "pgrep -f 'gateway.*run' >/dev/null"]
@@ -40,7 +41,9 @@ services:
       HERMES_UID: "10000"
       HERMES_GID: "10000"
       GATEWAY_MULTIPLEX_PROFILES: "true"
+      API_SERVER_PORT: "8643"
       HERMES_CONTAINER_SKIP_PROFILE_RECONCILE: "true"
       HERMES_ENV_OVERLAY: /opt/data/gateway-secondary.env
+      HERMES_GATEWAY_LOCK_DIR: /opt/data/state/gateway-locks-secondary
       HERMES_GATEWAY_NO_SUPERVISE: "true"
     command: ["gateway", "run", "--no-supervise"]
