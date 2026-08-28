@@ -62,6 +62,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def probe_credentials(target: Path) -> dict[str, bool]:
+    from hermes_cli.env_loader import load_hermes_dotenv
     from plugins.platforms.feishu.adapter import probe_bot
 
     primary = read_env(target / ".env")
@@ -78,9 +79,16 @@ def probe_credentials(target: Path) -> dict[str, bool]:
     secondary_bot = probe_bot(
         secondary["FEISHU_APP_ID"], secondary["FEISHU_APP_SECRET"], "feishu"
     )
+    os.environ["HERMES_ENV_OVERLAY"] = str(target / "gateway-secondary.env")
+    load_hermes_dotenv(hermes_home=target, load_external_secrets=False)
+    secondary_overlay_ok = (
+        os.environ.get("FEISHU_APP_ID") == secondary["FEISHU_APP_ID"]
+        and os.environ.get("FEISHU_APP_SECRET") == secondary["FEISHU_APP_SECRET"]
+    )
     return {
         "feishu_primary": bool(primary_bot),
         "feishu_secondary": bool(secondary_bot),
+        "gateway_secondary_overlay": secondary_overlay_ok,
         "provider": provider_ok,
     }
 
@@ -226,6 +234,7 @@ def main() -> int:
         else {
             "feishu_primary": False,
             "feishu_secondary": False,
+            "gateway_secondary_overlay": False,
             "provider": False,
         }
     )

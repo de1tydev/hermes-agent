@@ -35,3 +35,7 @@ services:
     container_name: hermes-gateway-secondary
     env_file:
       - /srv/hermes/gateway-secondary.env
+    environment:
+      HERMES_UID: "10000"
+      HERMES_GID: "10000"
+      HERMES_ENV_OVERLAY: /opt/data/gateway-secondary.env

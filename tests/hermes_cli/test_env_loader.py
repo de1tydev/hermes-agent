@@ -6,6 +6,67 @@ import sys
 from hermes_cli.env_loader import load_hermes_dotenv
 
 
+def test_process_env_overlay_wins_root_transport_credentials(tmp_path, monkeypatch):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    root_env = home / ".env"
+    overlay = home / "gateway-secondary.env"
+    root_env.write_text(
+        "FEISHU_APP_ID=primary\nFEISHU_APP_SECRET=primary-secret\n",
+        encoding="utf-8",
+    )
+    overlay.write_text(
+        "FEISHU_APP_ID=secondary\nFEISHU_APP_SECRET=secondary-secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_ENV_OVERLAY", str(overlay))
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+    monkeypatch.delenv("FEISHU_APP_SECRET", raising=False)
+
+    loaded = load_hermes_dotenv(hermes_home=home, load_external_secrets=False)
+
+    assert loaded == [root_env, overlay]
+    assert os.environ["FEISHU_APP_ID"] == "secondary"
+    assert os.environ["FEISHU_APP_SECRET"] == "secondary-secret"
+
+
+def test_process_env_overlay_rejects_escape(tmp_path, monkeypatch):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    outside = tmp_path / "outside.env"
+    outside.write_text("FEISHU_APP_ID=outside\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_ENV_OVERLAY", str(outside))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="stay inside"):
+        load_hermes_dotenv(hermes_home=home, load_external_secrets=False)
+
+
+def test_process_env_overlay_skips_profile_reload(tmp_path, monkeypatch):
+    home = tmp_path / "hermes"
+    profile = home / "profiles/example"
+    profile.mkdir(parents=True)
+    overlay = home / "gateway-secondary.env"
+    overlay.write_text("FEISHU_APP_ID=secondary\n", encoding="utf-8")
+    profile_env = profile / ".env"
+    profile_env.write_text("OPENAI_API_KEY=profile-key\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_ENV_OVERLAY", str(overlay))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+
+    loaded = load_hermes_dotenv(
+        hermes_home=profile, load_external_secrets=False
+    )
+
+    assert loaded == [profile_env]
+    assert os.environ["OPENAI_API_KEY"] == "profile-key"
+    assert "FEISHU_APP_ID" not in os.environ
+
+
 def test_recovered_update_retry_skips_external_secret_sources(tmp_path, monkeypatch):
     """The post-recovery updater must not remap native vault dependencies."""
     import hermes_cli.env_loader as env_loader

@@ -537,6 +537,7 @@ def load_hermes_dotenv(
     if load_external_secrets and not _early_recovery._should_skip_external_secret_sources():
         _apply_external_secret_sources(home_path)
     _apply_managed_env()
+    _apply_process_env_overlay(home_path, loaded)
 
     # config.yaml is the documented source of truth for terminal.* settings,
     # but the dotenv loads above run with override=True — so a stale
@@ -553,6 +554,45 @@ def load_hermes_dotenv(
     _reapply_terminal_config_bridge(home_path)
 
     return loaded
+
+
+def _apply_process_env_overlay(home_path: Path, loaded: list[Path]) -> None:
+    """Apply one operator-selected root-home env overlay last.
+
+    This supports multiple gateway processes sharing one ``HERMES_HOME`` while
+    holding different transport credentials. The overlay is deliberately
+    process-root-only: profile-scoped dotenv reloads skip it, and the selected
+    file must be a regular, non-symlink descendant of the process home.
+    """
+    raw = os.environ.get("HERMES_ENV_OVERLAY", "").strip()
+    if not raw or home_path.resolve() != _process_hermes_home().resolve():
+        return
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = home_path / candidate
+    candidate = Path(os.path.abspath(candidate))
+    home_absolute = Path(os.path.abspath(home_path))
+    try:
+        relative = candidate.relative_to(home_absolute)
+    except ValueError as exc:
+        raise ValueError("HERMES_ENV_OVERLAY must stay inside HERMES_HOME") from exc
+    probe = home_absolute
+    if probe.is_symlink():
+        raise ValueError("HERMES_ENV_OVERLAY HERMES_HOME symlink is not allowed")
+    for part in relative.parts:
+        probe /= part
+        if probe.is_symlink():
+            raise ValueError("HERMES_ENV_OVERLAY symlink is not allowed")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(home_path.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError("HERMES_ENV_OVERLAY is missing or escaped HERMES_HOME") from exc
+    if not resolved.is_file():
+        raise ValueError("HERMES_ENV_OVERLAY must be a regular file")
+    _sanitize_env_file_if_needed(resolved)
+    _load_dotenv_with_fallback(resolved, override=True)
+    loaded.append(resolved)
 
 
 def _reapply_terminal_config_bridge(home_path: Path) -> None:
