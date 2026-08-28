@@ -46,6 +46,32 @@ def _group(chat_id: str = "oc_new_group") -> SessionSource:
     )
 
 
+def _assert_valid_published_profile(tmp_path: Path, profile: str) -> None:
+    profile_dir = tmp_path / "profiles" / profile
+    for dirname in ("workspace", "sessions", "skills", "memories"):
+        assert (profile_dir / dirname).is_dir()
+    assert (profile_dir / ".env").is_file()
+    assert (profile_dir / "SOUL.md").is_file()
+    assert (profile_dir / ".hermes-auto-profile.json").is_file()
+    registry = json.loads(
+        (tmp_path / "state" / "profile-identity-registry.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(registry["bindings"]) == 1
+    assert next(iter(registry["bindings"].values()))["profile"] == profile
+
+    from hermes_cli.profiles import profiles_to_serve
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        served_names = [name for name, _path in profiles_to_serve(multiplex=True)]
+    assert served_names.count(profile) == 1
+    assert not any(".partial-" in name for name in served_names)
+
+
 @pytest.mark.asyncio
 async def test_first_contact_uses_one_profile_namespace_end_to_end(tmp_path):
     runner = _runner(tmp_path)
@@ -187,6 +213,107 @@ async def test_marker_write_failure_recovers_on_next_authorized_retry(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_partial_create_is_quarantined_and_retry_converges(tmp_path):
+    runner = _runner(tmp_path)
+    first = _dm("ou_partial_create")
+
+    from gateway.profile_provisioning import ProfileIdentityRegistry
+
+    profile = ProfileIdentityRegistry.deterministic_profile_name(first)
+    profile_dir = tmp_path / "profiles" / profile
+
+    def partial_create(_profile, **_kwargs):
+        profile_dir.mkdir(parents=True)
+        (profile_dir / "partial.canary").write_text("partial", encoding="utf-8")
+        raise OSError("create_profile crashed")
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ), patch(
+        "hermes_cli.profiles.create_profile",
+        side_effect=partial_create,
+    ):
+        assert await runner.prepare_inbound_source(first) is None
+
+    assert profile_dir.is_dir()
+    retry = _dm("ou_partial_create")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(retry) is retry
+
+    quarantines = list((tmp_path / "profiles").glob(f".{profile}.partial-*"))
+    assert len(quarantines) == 1
+    assert (quarantines[0] / "partial.canary").read_text(encoding="utf-8") == "partial"
+    assert retry.profile == profile
+    _assert_valid_published_profile(tmp_path, profile)
+    steady = _dm("ou_partial_create")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(steady) is steady
+    assert steady.profile == profile
+    assert len(list((tmp_path / "profiles").glob(f".{profile}.partial-*"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_materialized_claim_write_failure_recovers_on_retry(tmp_path):
+    runner = _runner(tmp_path)
+    first = _dm("ou_materialized_claim_failure")
+
+    from gateway.profile_provisioning import ProfileIdentityRegistry
+
+    original_write = ProfileIdentityRegistry._atomic_write_json
+    failed = False
+
+    def fail_first_materialized_claim(path, data):
+        nonlocal failed
+        if (
+            path.parent.name == "profile-provision-claims"
+            and data.get("status") == "materialized"
+            and not failed
+        ):
+            failed = True
+            raise OSError("materialized claim write failed")
+        return original_write(path, data)
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ), patch.object(
+        ProfileIdentityRegistry,
+        "_atomic_write_json",
+        side_effect=fail_first_materialized_claim,
+    ):
+        assert await runner.prepare_inbound_source(first) is None
+
+    profile = ProfileIdentityRegistry.deterministic_profile_name(first)
+    profile_dir = tmp_path / "profiles" / profile
+    assert profile_dir.is_dir()
+    retry = _dm("ou_materialized_claim_failure")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(retry) is retry
+
+    assert retry.profile == profile
+    _assert_valid_published_profile(tmp_path, profile)
+    assert len(list((tmp_path / "profiles").glob(f".{profile}.partial-*"))) == 1
+    steady = _dm("ou_materialized_claim_failure")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(steady) is steady
+    assert steady.profile == profile
+    assert len(list((tmp_path / "profiles").glob(f".{profile}.partial-*"))) == 1
+
+
+@pytest.mark.asyncio
 async def test_missing_marker_does_not_adopt_unknown_preexisting_profile(tmp_path):
     runner = _runner(tmp_path)
     source = _dm("ou_unknown_profile")
@@ -207,6 +334,44 @@ async def test_missing_marker_does_not_adopt_unknown_preexisting_profile(tmp_pat
     assert source.profile is None
     assert source.profile_prepare_rejected == "profile_target_conflict"
     assert not (profile_dir / ProfileIdentityRegistry.MARKER_FILENAME).exists()
+    assert not (tmp_path / "state" / "profile-identity-registry.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_creating_claim_does_not_adopt_existing_profile(tmp_path):
+    runner = _runner(tmp_path)
+    source = _dm("ou_mismatched_claim")
+
+    from gateway.profile_provisioning import ProfileIdentityRegistry
+
+    registry = ProfileIdentityRegistry(tmp_path)
+    profile = registry.deterministic_profile_name(source)
+    profile_dir = tmp_path / "profiles" / profile
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "foreign.txt").write_text("operator-owned", encoding="utf-8")
+    _key, digest, kind = registry.identity_for_source(source)
+    claim_path = registry._claim_path(digest)
+    registry._atomic_write_json(
+        claim_path,
+        {
+            "schema_version": registry.CLAIM_VERSION,
+            "platform": "feishu",
+            "kind": kind,
+            "identity_digest": "sha256:" + "0" * 64,
+            "profile": profile,
+            "status": "creating",
+        },
+    )
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(source) is None
+
+    assert source.profile_prepare_rejected == "profile_target_conflict"
+    assert (profile_dir / "foreign.txt").is_file()
+    assert not list((tmp_path / "profiles").glob(f".{profile}.partial-*"))
     assert not (tmp_path / "state" / "profile-identity-registry.json").exists()
 
 

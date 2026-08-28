@@ -261,26 +261,30 @@ class ProfileIdentityRegistry:
         claim_path = self._claim_path(digest)
         if profile_exists(profile):
             if not marker_path.exists():
-                if self._read_claim(claim_path) == materialized_claim:
+                existing_claim = self._read_claim(claim_path)
+                if existing_claim == materialized_claim:
                     self._atomic_write_json(marker_path, marker)
                     return
-                raise ProfileProvisionRejected(
-                    "profile_target_conflict",
-                    f"deterministic profile {profile!r} has no ownership marker",
-                )
-            try:
-                existing = json.loads(marker_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ProfileProvisionRejected(
-                    "profile_target_conflict",
-                    f"deterministic profile {profile!r} already exists",
-                ) from exc
-            if existing != marker:
-                raise ProfileProvisionRejected(
-                    "profile_target_conflict",
-                    f"deterministic profile {profile!r} belongs to another identity",
-                )
-            return
+                if existing_claim != creating_claim:
+                    raise ProfileProvisionRejected(
+                        "profile_target_conflict",
+                        f"deterministic profile {profile!r} has no ownership marker",
+                    )
+                self._quarantine_partial(profile_dir)
+            else:
+                try:
+                    existing = json.loads(marker_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    raise ProfileProvisionRejected(
+                        "profile_target_conflict",
+                        f"deterministic profile {profile!r} already exists",
+                    ) from exc
+                if existing != marker:
+                    raise ProfileProvisionRejected(
+                        "profile_target_conflict",
+                        f"deterministic profile {profile!r} belongs to another identity",
+                    )
+                return
 
         try:
             existing_claim = self._read_claim(claim_path)
@@ -304,6 +308,20 @@ class ProfileIdentityRegistry:
     def _claim_path(self, digest: str) -> Path:
         digest_hex = digest.removeprefix("sha256:")
         return self.primary_home / self.CLAIMS_RELATIVE_PATH / f"{digest_hex}.json"
+
+    @staticmethod
+    def _quarantine_partial(profile_dir: Path) -> Path:
+        quarantine = profile_dir.with_name(
+            f".{profile_dir.name}.partial-{uuid4().hex}"
+        )
+        try:
+            os.replace(profile_dir, quarantine)
+        except OSError as exc:
+            raise ProfileProvisionRejected(
+                "profile_recovery_failed",
+                f"could not quarantine partial profile {profile_dir.name!r}",
+            ) from exc
+        return quarantine
 
     @staticmethod
     def _read_claim(path: Path) -> Optional[dict[str, Any]]:
