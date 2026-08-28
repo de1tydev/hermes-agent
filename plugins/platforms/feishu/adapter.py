@@ -3329,6 +3329,27 @@ class FeishuAdapter(BasePlatformAdapter):
         message_id: str,
         is_bot: bool = False,
     ) -> None:
+        chat_id = getattr(message, "chat_id", "") or ""
+        chat_info = await self.get_chat_info(chat_id)
+        sender_profile = await self._resolve_sender_profile(sender_id, is_bot=is_bot)
+        source = self.build_source(
+            chat_id=chat_id,
+            chat_name=chat_info.get("name") or chat_id or "Feishu Chat",
+            chat_type=self._resolve_source_chat_type(chat_info=chat_info, event_chat_type=chat_type),
+            user_id=sender_profile["user_id"],
+            user_name=sender_profile["user_name"],
+            thread_id=getattr(message, "thread_id", None) or getattr(message, "root_id", None) or None,
+            user_id_alt=sender_profile["user_id_alt"],
+            is_bot=is_bot,
+        )
+        prepared_source = await self.prepare_inbound_source(source)
+        if prepared_source is None:
+            return
+        source = prepared_source
+
+        # Content extraction may write downloaded media to disk. Keep it after
+        # the side-effect-free transport authorization above so an unknown,
+        # unauthorized sender cannot create files before rejection.
         text, inbound_type, media_urls, media_types, mentions = await self._extract_message_content(message)
 
         if inbound_type == MessageType.TEXT:
@@ -3373,19 +3394,7 @@ class FeishuAdapter(BasePlatformAdapter):
             len(media_urls),
         )
 
-        chat_id = getattr(message, "chat_id", "") or ""
-        chat_info = await self.get_chat_info(chat_id)
-        sender_profile = await self._resolve_sender_profile(sender_id, is_bot=is_bot)
-        source = self.build_source(
-            chat_id=chat_id,
-            chat_name=chat_info.get("name") or chat_id or "Feishu Chat",
-            chat_type=self._resolve_source_chat_type(chat_info=chat_info, event_chat_type=chat_type),
-            user_id=sender_profile["user_id"],
-            user_name=sender_profile["user_name"],
-            thread_id=thread_id,
-            user_id_alt=sender_profile["user_id_alt"],
-            is_bot=is_bot,
-        )
+        source.thread_id = thread_id
         normalized = MessageEvent(
             text=text,
             message_type=inbound_type,
@@ -3403,6 +3412,10 @@ class FeishuAdapter(BasePlatformAdapter):
 
     async def _dispatch_inbound_event(self, event: MessageEvent) -> None:
         """Apply Feishu-specific burst protection before entering the base adapter."""
+        prepared_source = await self.prepare_inbound_source(event.source)
+        if prepared_source is None:
+            return
+        event.source = prepared_source
         if event.message_type == MessageType.TEXT and not event.is_command():
             await self._enqueue_text_event(event)
             return

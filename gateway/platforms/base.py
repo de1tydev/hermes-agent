@@ -3092,6 +3092,7 @@ class BasePlatformAdapter(ABC):
         self.config = config
         self.platform = platform
         self._message_handler: Optional[MessageHandler] = None
+        self._inbound_source_preparer: Optional[Callable[[Any], Awaitable[Any]]] = None
         # Optional gateway-supplied fan-out for platform-native emoji
         # reaction events (see ``set_reaction_handler``).
         self._reaction_handler: Optional[
@@ -3805,6 +3806,42 @@ class BasePlatformAdapter(ABC):
         as unverified background reference rather than authoritative input.
         """
         self._authorization_check = callback
+
+    def set_inbound_source_preparer(
+        self, callback: Optional[Callable[[Any], Awaitable[Any]]]
+    ) -> None:
+        """Install the gateway-owned admission/routing preparation seam."""
+        self._inbound_source_preparer = callback
+
+    async def prepare_inbound_source(self, source: Any) -> Any:
+        """Prepare ``source`` once before any adapter/session key is derived.
+
+        A missing callback preserves legacy adapters.  The marker is strictly
+        in-process and therefore cannot be forged through serialized ingress.
+        """
+        if getattr(source, "_gateway_inbound_prepared", False) is True:
+            return source
+        if getattr(source, "profile_prepare_rejected", None):
+            return None
+        callback = getattr(self, "_inbound_source_preparer", None)
+        if not callable(callback):
+            return source
+        try:
+            prepared = await callback(source)
+        except Exception:
+            logger.warning(
+                "[%s] Inbound source preparation failed; dropping message",
+                self.name,
+                exc_info=True,
+            )
+            source.profile_prepare_rejected = "profile_prepare_failed"
+            return None
+        if prepared is None:
+            if not getattr(source, "profile_prepare_rejected", None):
+                source.profile_prepare_rejected = "profile_prepare_rejected"
+            return None
+        prepared._gateway_inbound_prepared = True
+        return prepared
 
     def _is_sender_authorized(
         self,
@@ -6132,6 +6169,11 @@ class BasePlatformAdapter(ABC):
         """
         if not self._message_handler:
             return
+
+        prepared_source = await self.prepare_inbound_source(event.source)
+        if prepared_source is None:
+            return
+        event.source = prepared_source
 
         if event.allow_gateway_control:
             coerce_plaintext_gateway_command(event)

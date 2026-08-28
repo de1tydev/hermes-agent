@@ -44,6 +44,71 @@ class TestProfileRouteMatching:
         # guild matches but chat differs -> NO match
         assert not r.matches("discord", guild_id="111", chat_id="333")
 
+    def test_user_identity_route_matches_only_same_user(self):
+        route = ProfileRoute(
+            name="dm-user",
+            platform="feishu",
+            profile="user-profile",
+            user_id="ou_expected",
+        )
+        assert route.matches("feishu", user_id="ou_expected")
+        assert not route.matches("feishu", user_id="ou_other")
+
+    def test_dm_user_route_does_not_override_group_chat_route(self):
+        routes = [
+            ProfileRoute(
+                name="dm-alice",
+                platform="feishu",
+                profile="dm-alice",
+                user_id="ou_alice",
+            ),
+            ProfileRoute(
+                name="group-ops",
+                platform="feishu",
+                profile="group-ops",
+                chat_id="oc_ops",
+            ),
+        ]
+        routes.sort(key=lambda route: route.specificity, reverse=True)
+
+        matched = match_profile_route(
+            routes,
+            "feishu",
+            chat_id="oc_ops",
+            user_id="ou_alice",
+            chat_type="group",
+        )
+
+        assert matched is not None
+        assert matched.profile == "group-ops"
+
+    def test_dm_user_route_still_wins_for_private_source(self):
+        routes = [
+            ProfileRoute(
+                name="dm-alice",
+                platform="feishu",
+                profile="dm-alice",
+                user_id="ou_alice",
+            ),
+            ProfileRoute(
+                name="chat-fallback",
+                platform="feishu",
+                profile="chat-fallback",
+                chat_id="oc_dm",
+            ),
+        ]
+        routes.sort(key=lambda route: route.specificity, reverse=True)
+
+        matched = match_profile_route(
+            routes,
+            "feishu",
+            chat_id="oc_dm",
+            user_id="ou_alice",
+            chat_type="dm",
+        )
+
+        assert matched is not None
+        assert matched.profile == "dm-alice"
 
 class TestParseProfileRoutes:
     def test_empty(self):
