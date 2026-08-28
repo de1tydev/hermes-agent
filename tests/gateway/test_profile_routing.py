@@ -44,6 +44,16 @@ class TestProfileRouteMatching:
         # guild matches but chat differs -> NO match
         assert not r.matches("discord", guild_id="111", chat_id="333")
 
+    def test_user_identity_route_matches_only_same_user(self):
+        route = ProfileRoute(
+            name="dm-user",
+            platform="feishu",
+            profile="user-profile",
+            user_id="ou_expected",
+        )
+        assert route.matches("feishu", user_id="ou_expected")
+        assert not route.matches("feishu", user_id="ou_other")
+
 
 class TestParseProfileRoutes:
     def test_empty(self):

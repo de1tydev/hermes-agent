@@ -6862,6 +6862,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # secondary profiles do (#64674). Explicit config= injection (tests)
         # is left untouched.
         self.config = config if config is not None else load_gateway_config_for_runner()
+        self._multiplex_primary_home = Path(get_hermes_home())
         # Mark the process as a profile multiplexer when configured. This flips
         # agent.secret_scope.get_secret() to fail-closed on any unscoped
         # credential read, so a missed migration crashes loudly instead of
@@ -13102,6 +13103,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 _set_reaction(self._handle_reaction_event)
             adapter.set_topic_recovery_fn(self._recover_telegram_topic_thread_id)
             adapter.set_authorization_check(self._make_adapter_auth_check(adapter.platform))
+            adapter.set_inbound_source_preparer(self.prepare_inbound_source)
             adapter.set_platform_event_handler(self._primary_platform_event_handler())
             adapter._busy_text_mode = self._busy_text_mode
             _pending_connects.append((platform, platform_config, adapter))
@@ -15825,6 +15827,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         adapter.set_authorization_check(
             self._make_adapter_auth_check(platform, profile_name=profile_name)
         )
+        adapter.set_inbound_source_preparer(self.prepare_inbound_source)
         adapter.set_platform_event_handler(
             self._make_profile_platform_event_handler(profile_name)
         )
@@ -28542,6 +28545,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 chat_id=source.chat_id,
                 thread_id=getattr(source, "thread_id", None),
                 parent_chat_id=getattr(source, "parent_chat_id", None),
+                user_id=getattr(source, "user_id", None),
             )
         except Exception:
             logger.warning(
@@ -28574,6 +28578,120 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             getattr(source, "thread_id", None), getattr(source, "parent_chat_id", None),
         )
         return None
+
+    def _profile_auto_provision_enabled(self, source: SessionSource) -> bool:
+        """Return whether this source's transport opted into auto-provision."""
+        adapter = None
+        adapter_ref = getattr(source, "_transport_adapter_ref", None)
+        if callable(adapter_ref):
+            try:
+                adapter = adapter_ref()
+            except Exception:
+                adapter = None
+        platform_config = getattr(adapter, "config", None)
+        if platform_config is None:
+            platforms = getattr(getattr(self, "config", None), "platforms", None)
+            if isinstance(platforms, dict):
+                platform_config = platforms.get(getattr(source, "platform", None))
+        extra = getattr(platform_config, "extra", None)
+        if not isinstance(extra, dict):
+            return False
+        raw = extra.get("profile_auto_provision", False)
+        if isinstance(raw, bool):
+            return raw
+        return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    async def prepare_inbound_source(
+        self, source: SessionSource
+    ) -> Optional[SessionSource]:
+        """Authorize, resolve, and stamp auto-provisioned ingress identity.
+
+        This method is intentionally called by adapters before they derive any
+        batch/busy/session key.  Platforms that have not explicitly enabled
+        ``profile_auto_provision`` retain their existing ingress behavior.
+        """
+        config = getattr(self, "config", None)
+        if not getattr(config, "multiplex_profiles", False):
+            return source
+        if not self._profile_auto_provision_enabled(source):
+            return source
+
+        primary_home = Path(
+            getattr(self, "_multiplex_primary_home", None) or get_hermes_home()
+        )
+        # Authorization reads the primary transport's allowlist/pairing scope,
+        # never the runtime profile selected below.
+        source._authorization_profile_home = primary_home
+        try:
+            authorized = self._is_user_authorized_for_source(source)
+        except Exception:
+            logger.warning(
+                "Inbound source authorization failed during profile preparation",
+                exc_info=True,
+            )
+            source.profile_prepare_rejected = "authorization_failed"
+            return None
+        if not authorized:
+            source.profile_prepare_rejected = "unauthorized"
+            return None
+
+        static_profile = (
+            str(getattr(source, "profile", "") or "").strip() or None
+        )
+        if static_profile is None and getattr(config, "profile_routes", None):
+            try:
+                static_profile = self._profile_name_for_source(source)
+            except Exception as exc:
+                from gateway.profile_routing import ProfileRouteRejected
+
+                if isinstance(exc, ProfileRouteRejected):
+                    source.profile_prepare_rejected = "profile_not_served"
+                    return None
+                logger.warning("Static profile resolution failed", exc_info=True)
+                source.profile_prepare_rejected = "profile_route_failed"
+                return None
+
+        from gateway.profile_provisioning import (
+            ProfileIdentityRegistry,
+            ProfileProvisionRejected,
+        )
+
+        registry = ProfileIdentityRegistry(primary_home)
+        try:
+            identity_key, _digest, _kind = registry.identity_for_source(source)
+        except ProfileProvisionRejected as exc:
+            source.profile_prepare_rejected = exc.code
+            return None
+        locks = self.__dict__.setdefault("_profile_prepare_locks", {})
+        identity_lock = locks.get(identity_key)
+        if identity_lock is None:
+            identity_lock = asyncio.Lock()
+            locks[identity_key] = identity_lock
+        try:
+            async with identity_lock:
+                profile = await asyncio.to_thread(
+                    registry.resolve_or_provision,
+                    source,
+                    static_profile=static_profile,
+                    profile_allowlist=getattr(
+                        config, "multiplex_profile_allowlist", None
+                    ),
+                )
+        except ProfileProvisionRejected as exc:
+            logger.warning(
+                "Rejecting inbound profile preparation (%s): %s",
+                exc.code,
+                exc,
+            )
+            source.profile_prepare_rejected = exc.code
+            return None
+        except Exception:
+            logger.warning("Profile provisioning failed", exc_info=True)
+            source.profile_prepare_rejected = "profile_provision_failed"
+            return None
+
+        source.profile = profile
+        return source
 
     def _resolve_profile_home_for_source(self, source: SessionSource) -> "Path":
         """Resolve which profile's HERMES_HOME should serve this inbound source.
