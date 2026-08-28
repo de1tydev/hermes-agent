@@ -91,6 +91,7 @@ class ProfileRoute:
         thread_id: Optional[str] = None,
         parent_chat_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        chat_type: Optional[str] = None,
     ) -> bool:
         """Return True if this route matches the given source fields.
 
@@ -111,6 +112,12 @@ class ProfileRoute:
         if self.chat_id and self.chat_id != chat_id and self.chat_id != parent_chat_id:
             return False
         if self.guild_id and self.guild_id != guild_id:
+            return False
+        if self.user_id and chat_type is not None and chat_type not in {
+            "dm",
+            "private",
+            "p2p",
+        }:
             return False
         if self.user_id and self.user_id != user_id:
             return False
@@ -175,9 +182,18 @@ def match_profile_route(
     thread_id: Optional[str] = None,
     parent_chat_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    chat_type: Optional[str] = None,
 ) -> Optional[ProfileRoute]:
     """Return the best-matching route, or None for no match."""
     for route in routes:
-        if route.matches(platform, guild_id=guild_id, chat_id=chat_id, thread_id=thread_id, parent_chat_id=parent_chat_id, user_id=user_id):
+        if route.matches(
+            platform,
+            guild_id=guild_id,
+            chat_id=chat_id,
+            thread_id=thread_id,
+            parent_chat_id=parent_chat_id,
+            user_id=user_id,
+            chat_type=chat_type,
+        ):
             return route
     return None

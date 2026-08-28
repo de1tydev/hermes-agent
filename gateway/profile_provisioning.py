@@ -47,8 +47,10 @@ class ProfileIdentityRegistry:
 
     SCHEMA_VERSION = "hermes-profile-identity-registry/v1"
     MARKER_VERSION = "hermes-auto-profile/v1"
+    CLAIM_VERSION = "hermes-auto-profile-claim/v1"
     REGISTRY_RELATIVE_PATH = Path("state/profile-identity-registry.json")
     LOCK_RELATIVE_PATH = Path("state/profile-identity-registry.lock")
+    CLAIMS_RELATIVE_PATH = Path("state/profile-provision-claims")
     MARKER_FILENAME = ".hermes-auto-profile.json"
 
     def __init__(self, primary_home: Path) -> None:
@@ -149,6 +151,7 @@ class ProfileIdentityRegistry:
                     "profile": profile,
                 }
                 self._write_registry(data)
+                self._clear_claim(digest)
                 return profile
         finally:
             if lock_fd >= 0:
@@ -248,7 +251,23 @@ class ProfileIdentityRegistry:
             "identity_digest": digest,
             "profile": profile,
         }
+        creating_claim = dict(marker)
+        creating_claim.update(
+            schema_version=self.CLAIM_VERSION,
+            status="creating",
+        )
+        materialized_claim = dict(creating_claim)
+        materialized_claim["status"] = "materialized"
+        claim_path = self._claim_path(digest)
         if profile_exists(profile):
+            if not marker_path.exists():
+                if self._read_claim(claim_path) == materialized_claim:
+                    self._atomic_write_json(marker_path, marker)
+                    return
+                raise ProfileProvisionRejected(
+                    "profile_target_conflict",
+                    f"deterministic profile {profile!r} has no ownership marker",
+                )
             try:
                 existing = json.loads(marker_path.read_text(encoding="utf-8"))
             except Exception as exc:
@@ -264,7 +283,16 @@ class ProfileIdentityRegistry:
             return
 
         try:
+            existing_claim = self._read_claim(claim_path)
+            if existing_claim is not None and existing_claim != creating_claim:
+                raise ProfileProvisionRejected(
+                    "profile_claim_conflict",
+                    f"provision claim for {profile!r} belongs to another identity",
+                )
+            if existing_claim is None:
+                self._atomic_write_json(claim_path, creating_claim)
             create_profile(profile, no_alias=True)
+            self._atomic_write_json(claim_path, materialized_claim)
             self._atomic_write_json(marker_path, marker)
         except ProfileProvisionRejected:
             raise
@@ -272,6 +300,32 @@ class ProfileIdentityRegistry:
             raise ProfileProvisionRejected(
                 "profile_create_failed", f"could not create profile {profile!r}"
             ) from exc
+
+    def _claim_path(self, digest: str) -> Path:
+        digest_hex = digest.removeprefix("sha256:")
+        return self.primary_home / self.CLAIMS_RELATIVE_PATH / f"{digest_hex}.json"
+
+    @staticmethod
+    def _read_claim(path: Path) -> Optional[dict[str, Any]]:
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ProfileProvisionRejected(
+                "profile_claim_invalid", "profile provision claim is unreadable"
+            ) from exc
+        if not isinstance(data, dict):
+            raise ProfileProvisionRejected(
+                "profile_claim_invalid", "profile provision claim is invalid"
+            )
+        return data
+
+    def _clear_claim(self, digest: str) -> None:
+        try:
+            self._claim_path(digest).unlink()
+        except OSError:
+            pass
 
     def _write_registry(self, data: dict[str, Any]) -> None:
         self._atomic_write_json(self.registry_path, data)

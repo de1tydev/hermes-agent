@@ -129,6 +129,88 @@ async def test_registry_write_failure_fails_closed_without_default_fallback(tmp_
 
 
 @pytest.mark.asyncio
+async def test_marker_write_failure_recovers_on_next_authorized_retry(tmp_path):
+    runner = _runner(tmp_path)
+    first = _dm("ou_marker_failure")
+
+    from gateway.profile_provisioning import ProfileIdentityRegistry
+
+    original_write = ProfileIdentityRegistry._atomic_write_json
+    failed = False
+
+    def fail_first_marker(path, data):
+        nonlocal failed
+        if path.name == ProfileIdentityRegistry.MARKER_FILENAME and not failed:
+            failed = True
+            raise OSError("marker write failed")
+        return original_write(path, data)
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ), patch.object(
+        ProfileIdentityRegistry,
+        "_atomic_write_json",
+        side_effect=fail_first_marker,
+    ):
+        assert await runner.prepare_inbound_source(first) is None
+
+    profile = ProfileIdentityRegistry.deterministic_profile_name(first)
+    profile_dir = tmp_path / "profiles" / profile
+    assert profile_dir.is_dir()
+    assert not (profile_dir / ProfileIdentityRegistry.MARKER_FILENAME).exists()
+    _key, identity_digest, _kind = ProfileIdentityRegistry.identity_for_source(first)
+    claim_path = (
+        tmp_path
+        / ProfileIdentityRegistry.CLAIMS_RELATIVE_PATH
+        / f"{identity_digest.removeprefix('sha256:')}.json"
+    )
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    assert claim["status"] == "materialized"
+
+    retry = _dm("ou_marker_failure")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(retry) is retry
+
+    assert retry.profile == profile
+    assert (profile_dir / ProfileIdentityRegistry.MARKER_FILENAME).is_file()
+    registry = json.loads(
+        (tmp_path / "state" / "profile-identity-registry.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert next(iter(registry["bindings"].values()))["profile"] == profile
+    assert not claim_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_missing_marker_does_not_adopt_unknown_preexisting_profile(tmp_path):
+    runner = _runner(tmp_path)
+    source = _dm("ou_unknown_profile")
+
+    from gateway.profile_provisioning import ProfileIdentityRegistry
+
+    profile = ProfileIdentityRegistry.deterministic_profile_name(source)
+    profile_dir = tmp_path / "profiles" / profile
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "foreign.txt").write_text("operator-owned", encoding="utf-8")
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(source) is None
+
+    assert source.profile is None
+    assert source.profile_prepare_rejected == "profile_target_conflict"
+    assert not (profile_dir / ProfileIdentityRegistry.MARKER_FILENAME).exists()
+    assert not (tmp_path / "state" / "profile-identity-registry.json").exists()
+
+
+@pytest.mark.asyncio
 async def test_static_dynamic_conflict_is_rejected(tmp_path):
     runner = _runner(tmp_path)
     source = _dm("ou_conflict")
