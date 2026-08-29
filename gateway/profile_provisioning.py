@@ -308,7 +308,7 @@ class ProfileIdentityRegistry:
             if existing_claim is None:
                 self._atomic_write_json(claim_path, creating_claim)
             create_profile(profile, no_alias=True)
-            self._seed_profile_capabilities(profile_dir)
+            self._seed_profile_capabilities(profile_dir, source=source)
             self._atomic_write_json(claim_path, materialized_claim)
             self._atomic_write_json(marker_path, marker)
         except ProfileProvisionRejected:
@@ -318,7 +318,7 @@ class ProfileIdentityRegistry:
                 "profile_create_failed", f"could not create profile {profile!r}"
             ) from exc
 
-    def _seed_profile_capabilities(self, profile_dir: Path) -> None:
+    def _seed_profile_capabilities(self, profile_dir: Path, *, source: Any) -> None:
         """Copy safe runtime capabilities without transport credentials.
 
         Auto-provisioned profiles need the same model/provider configuration as
@@ -328,6 +328,7 @@ class ProfileIdentityRegistry:
         its own workspace before publication.
         """
         config_path = self.primary_home / "config.yaml"
+        config: dict[str, Any] = {}
         if config_path.is_file() and not config_path.is_symlink():
             import yaml
 
@@ -341,19 +342,48 @@ class ProfileIdentityRegistry:
                 raise ProfileProvisionRejected(
                     "profile_template_invalid", "primary config is not an object"
                 )
-            config = dict(config)
-            config.pop("gateway", None)
-            terminal = config.get("terminal")
-            if not isinstance(terminal, dict):
-                terminal = {}
-                config["terminal"] = terminal
-            else:
-                terminal = dict(terminal)
-                config["terminal"] = terminal
-            terminal["cwd"] = str(profile_dir / "workspace")
-            from utils import atomic_yaml_write
+        config = dict(config)
+        config.pop("gateway", None)
+        terminal = config.get("terminal")
+        if not isinstance(terminal, dict):
+            terminal = {}
+            config["terminal"] = terminal
+        else:
+            terminal = dict(terminal)
+            config["terminal"] = terminal
+        terminal["cwd"] = str(profile_dir / "workspace")
 
-            atomic_yaml_write(profile_dir / "config.yaml", config, create_mode=0o600)
+        platform = str(
+            getattr(getattr(source, "platform", None), "value", None) or ""
+        ).strip().lower()
+        chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+        chat_id = str(getattr(source, "chat_id", "") or "").strip()
+        if platform == "feishu" and chat_type in {"dm", "group"} and chat_id:
+            chat_name = str(
+                getattr(source, "chat_name", None)
+                or getattr(source, "user_name", None)
+                or profile_dir.name
+            )
+            home_channel = {
+                "platform": "feishu",
+                "chat_id": chat_id,
+                "name": chat_name,
+            }
+            user_id = str(getattr(source, "user_id", "") or "").strip()
+            if user_id:
+                home_channel["user_id"] = user_id
+            platforms = config.setdefault("platforms", {})
+            if not isinstance(platforms, dict):
+                platforms = {}
+                config["platforms"] = platforms
+            feishu = platforms.setdefault("feishu", {})
+            if not isinstance(feishu, dict):
+                feishu = {}
+                platforms["feishu"] = feishu
+            feishu["home_channel"] = home_channel
+        from utils import atomic_yaml_write
+
+        atomic_yaml_write(profile_dir / "config.yaml", config, create_mode=0o600)
 
         allowed_lines: list[str] = []
         env_path = self.primary_home / ".env"

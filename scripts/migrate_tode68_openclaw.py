@@ -131,6 +131,7 @@ class ProfileRecord:
     source_agent: str
     source_workspace: Path
     identity_digest: str | None = None
+    home_chat_id: str | None = None
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -271,7 +272,9 @@ def inventory(source: Path) -> tuple[list[ProfileRecord], dict[str, Any]]:
                 raise MigrationError(f"registry references unknown agent: {agent}")
             digest = identity_digest(kind, identity)
             profile = profile_name(kind, digest)
-            profiles.append(ProfileRecord(profile, kind, agent, agents[agent], digest))
+            profiles.append(
+                ProfileRecord(profile, kind, agent, agents[agent], digest, identity)
+            )
             registry_bindings[f"feishu:{kind}:sha256:{digest}"] = {
                 "identity_digest": f"sha256:{digest}",
                 "kind": kind,
@@ -708,7 +711,16 @@ def yaml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def profile_config(profile: str) -> str:
+def profile_config(profile: str, *, home_chat_id: str | None = None) -> str:
+    home_channel = ""
+    if home_chat_id:
+        home_channel = f"""platforms:
+  feishu:
+    home_channel:
+      platform: feishu
+      chat_id: {yaml_string(home_chat_id)}
+      name: {yaml_string(profile)}
+"""
     return f"""_config_version: 12
 model:
   default: deepseek-v4-flash
@@ -750,6 +762,7 @@ display:
       busy_ack_detail: false
       busy_steer_ack_enabled: false
       live_status: "off"
+{home_channel}
 terminal:
   backend: local
   cwd: {yaml_string(f'/opt/data/profiles/{profile}/workspace')}
@@ -849,7 +862,10 @@ def build_profile(
     if not soul_parts:
         soul_parts.append("你是该飞书聊天的独立 Hermes Agent。只使用当前 Profile 的资料和 Memory。")
     atomic_write(profile / "SOUL.md", ("\n\n".join(soul_parts).strip() + "\n").encode())
-    atomic_write(profile / "config.yaml", profile_config(record.profile).encode())
+    atomic_write(
+        profile / "config.yaml",
+        profile_config(record.profile, home_chat_id=record.home_chat_id).encode(),
+    )
     atomic_write(profile / ".env", env_bytes(provider_secrets, provider_only=True))
     skills = install_shared_skills(shared_skills, profile)
     documents = copy_documents(record.source_workspace, profile / "workspace")

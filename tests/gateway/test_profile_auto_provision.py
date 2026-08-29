@@ -144,6 +144,13 @@ async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path)
     assert "gateway" not in config
     assert config["model"] == {"default": "model-a", "provider": "tode"}
     assert config["terminal"]["cwd"] == str(profile / "workspace")
+    assert config["platforms"]["feishu"]["home_channel"] == {
+        "platform": "feishu",
+        "chat_id": "oc_dm",
+        "name": profile.name,
+        "user_id": "ou_safe_capabilities",
+    }
+    assert "enabled" not in config["platforms"]["feishu"]
     assert (profile / "skills/example/SKILL.md").is_file()
 
 
@@ -163,6 +170,17 @@ async def test_authorized_unknown_group_uses_chat_identity(tmp_path):
 
     assert first.profile == another_member.profile
     assert first.profile.startswith("feishu-group-")
+    import yaml
+
+    profile = tmp_path / "profiles" / first.profile
+    config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+    assert config["platforms"]["feishu"]["home_channel"] == {
+        "platform": "feishu",
+        "chat_id": "oc_new_group",
+        "name": first.profile,
+        "user_id": "ou_group_member",
+    }
+    assert "enabled" not in config["platforms"]["feishu"]
 
 
 @pytest.mark.asyncio

@@ -131,3 +131,11 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
             "busy_steer_ack_enabled": False,
             "live_status": "off",
         }
+        if row["kind"] in {"dm", "group"}:
+            home = config["platforms"]["feishu"]["home_channel"]
+            assert home["platform"] == "feishu"
+            assert home["name"] == row["profile"]
+            assert home["chat_id"].startswith("ou_" if row["kind"] == "dm" else "oc_")
+            assert "enabled" not in config["platforms"]["feishu"]
+        else:
+            assert "platforms" not in config
