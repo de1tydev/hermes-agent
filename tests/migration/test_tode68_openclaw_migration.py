@@ -116,6 +116,7 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
         assert (profile / "skills/sample/SKILL.md").is_file()
         assert (profile / "skills/legacy-memory-search/scripts/search.py").is_file()
         config = yaml.safe_load((profile / "config.yaml").read_text())
+        assert config["timezone"] == "Asia/Shanghai"
         assert config["approvals"]["destructive_slash_confirm"] is False
         assert config["display"]["show_commentary"] is False
         assert config["display"]["memory_notifications"] == "off"

@@ -146,6 +146,7 @@ def test_remediation_materializes_skills_credentials_tools_and_approval_policy(t
     assert receipt["profiles_updated"] == 1
     assert {p.name for p in (profile / "skills").iterdir()} == EXPECTED
     config = yaml.safe_load((profile / "config.yaml").read_text())
+    assert config["timezone"] == "Asia/Shanghai"
     assert config["approvals"]["destructive_slash_confirm"] is False
     assert "enabled" not in config["platforms"]["feishu"]
     assert config["display"]["show_commentary"] is False

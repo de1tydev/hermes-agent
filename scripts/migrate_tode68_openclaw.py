@@ -722,6 +722,7 @@ def profile_config(profile: str, *, home_chat_id: str | None = None) -> str:
       name: {yaml_string(profile)}
 """
     return f"""_config_version: 12
+timezone: Asia/Shanghai
 model:
   default: deepseek-v4-flash
   provider: tode

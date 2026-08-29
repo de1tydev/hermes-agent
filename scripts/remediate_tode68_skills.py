@@ -179,6 +179,7 @@ def private_writable_tree(root: Path, uid: int, gid: int) -> None:
 
 def update_config(path: Path, *, profile: bool = False) -> None:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data["timezone"] = "Asia/Shanghai"
     approvals = data.setdefault("approvals", {})
     approvals["destructive_slash_confirm"] = False
     display = data.setdefault("display", {})

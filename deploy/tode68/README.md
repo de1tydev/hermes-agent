@@ -35,6 +35,7 @@ docker start openclaw-gateway
 - 关闭 `/new`、`/reset`、`/clear`、`/undo` 的额外确认提示；
 - 飞书只发送最终答复，关闭工具进度、reasoning、commentary、流式草稿和长任务心跳；
 - 每个已路由单聊或群聊以自身作为该 Profile 的 Home Channel；新聊天自动建 Profile 时同步写入，无需手工 `/sethome`；
+- 使用 `scripts/migrate_tode68_openclaw_cron.py` 将 OpenClaw 用户/业务定时任务按路由导入各 Profile；保留启停状态，不迁移执行历史，OpenClaw 内部维护任务进入审计清单而不继续执行；
 - 生成 `/srv/hermes/migration/skill-remediation-receipt.json`。
 
 旧环境没有配置 `GEMINI_API_KEY`、`DASHSCOPE_API_KEY`、`EVOLINK_API_KEY` 时，对应图片 Skill 会保留并显示缺少配置，不会伪造或复用其他 Provider 的凭据。
