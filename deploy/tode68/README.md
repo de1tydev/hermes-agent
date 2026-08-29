@@ -2,6 +2,12 @@
 
 该部署使用两个 Gateway 连接现网已有的两个飞书应用，共享同一套 39 条聊天身份路由与 43 个隔离 Profile。飞书 transport 凭据只存在于 `/srv/hermes/.env` 和 `/srv/hermes/gateway-secondary.env`，不会复制到 Profile。
 
+跨 Profile 访问使用两层强制隔离：Hermes 原生工具入口仅按飞书
+`user_id=cfgg8ef2` 识别管理员；其他用户的终端、`execute_code` 和验证子进程
+由 Linux Landlock 限制为当前 Profile 可读写、共享 Skill/二进制只读。普通用户
+即使传入 `cross_profile=True`、拼接路径、使用符号链接或修改自己的
+`state.db`，也不能读取、写入或枚举其他 Profile。
+
 切换前必须确认：
 
 - `/srv/hermes/migration/external-memory-disabled.json` 的 `passed` 为 `true`；

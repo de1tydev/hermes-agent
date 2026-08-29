@@ -6462,6 +6462,27 @@ def _get_pre_tool_call_directive_details(
             message=fmt.format(tool_name=tool_name),
         )
 
+    # Deployment-enforced multi-profile policy. This runs before configurable
+    # hooks so a profile cannot disable or rewrite its own security boundary.
+    try:
+        from agent.profile_access import get_pre_tool_call_block_message
+
+        profile_block = get_pre_tool_call_block_message(
+            tool_name, args, task_id=task_id
+        )
+    except Exception as exc:
+        # The profile policy itself decides whether enforcement is enabled.
+        # An import/runtime failure while enabled must never fall through to
+        # the user-configurable hook layer.
+        if os.getenv("HERMES_PROFILE_ISOLATION_ENFORCED", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }:
+            profile_block = f"Profile isolation policy failed closed: {exc}"
+        else:
+            profile_block = None
+    if profile_block:
+        return _PreToolCallDirective(action="block", message=profile_block)
+
     from hermes_cli.lifecycle import invoke_hook as invoke_lifecycle_hook
 
     hook_results = invoke_lifecycle_hook(

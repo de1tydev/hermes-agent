@@ -34,6 +34,7 @@ Directory layout for user skills:
 
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -782,6 +783,16 @@ def _find_skill_in_other_profiles(name: str) -> List[Tuple[str, Path]]:
     """
     matches: List[Tuple[str, Path]] = []
     try:
+        from agent.profile_access import is_profile_admin, isolation_enforced
+
+        if isolation_enforced() and not is_profile_admin():
+            return matches
+    except Exception:
+        if os.getenv("HERMES_PROFILE_ISOLATION_ENFORCED", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }:
+            return matches
+    try:
         from hermes_constants import get_default_hermes_root
         from agent.skill_utils import is_excluded_skill_path
     except Exception:
@@ -856,16 +867,17 @@ def _skill_not_found_error(name: str, suffix: str = "") -> str:
             base += (
                 f" A skill by that name exists in profile "
                 f"'{other_profile}' ({other_path}). To edit a skill in "
-                f"another profile, switch profiles (`hermes -p "
-                f"{other_profile}`) or operate via explicit file tools "
-                f"with ``cross_profile=True``."
+                f"another profile. A deployment administrator may switch "
+                f"profiles (`hermes -p {other_profile}`) or use explicit "
+                f"file tools with ``cross_profile=True``."
             )
         else:
             names = ", ".join(f"'{p}'" for p, _ in others)
             base += (
                 f" Skills by that name exist in other profiles: {names}. "
-                f"Switch profiles (`hermes -p <name>`) to edit there, or "
-                f"operate via explicit file tools with ``cross_profile=True``."
+                f"A deployment administrator may switch profiles "
+                f"(`hermes -p <name>`) or use explicit file tools with "
+                f"``cross_profile=True``."
             )
     else:
         base += " Use skills_list() to see available skills."

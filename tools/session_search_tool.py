@@ -355,6 +355,10 @@ def _resolve_profile_db(profile: str):
     if profile is None or not str(profile).strip():
         return None
 
+    from agent.profile_access import authorize_profile
+
+    authorize_profile(str(profile), operation="session read")
+
     from hermes_cli import profiles as profiles_mod
     from hermes_state import SessionDB
 
@@ -405,11 +409,22 @@ def _locate_session_db(session_id: str):
     except Exception:
         return None, None
 
-    targets = [("default", profiles_mod.get_profile_dir("default"))]
-    try:
-        targets += [(info.name, info.path) for info in profiles_mod.list_profiles()]
-    except Exception:
-        logging.debug("list_profiles failed during session locate", exc_info=True)
+    from agent.profile_access import (
+        current_profile_name,
+        is_profile_admin,
+        isolation_enforced,
+        profile_home,
+    )
+
+    if isolation_enforced() and not is_profile_admin():
+        current = current_profile_name()
+        targets = [(current, profile_home(current))]
+    else:
+        targets = [("default", profiles_mod.get_profile_dir("default"))]
+        try:
+            targets += [(info.name, info.path) for info in profiles_mod.list_profiles()]
+        except Exception:
+            logging.debug("list_profiles failed during session locate", exc_info=True)
 
     seen: set = set()
     for name, home in targets:

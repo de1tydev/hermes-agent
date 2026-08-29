@@ -1084,6 +1084,9 @@ class ProcessRegistry:
                 pty_env.setdefault("GIT_PAGER", "cat")
                 pty_env.setdefault("PAGER", "cat")
                 pty_argv = [user_shell, "-lic", f"set +m; {safe_command}"]
+                from agent.profile_access import sandbox_argv
+
+                pty_argv = sandbox_argv(pty_argv)
 
                 # Cgroup isolation for PTY mode (#70716, reviewer gap #1):
                 # Wrap the PTY command in a systemd scope so interactive
@@ -1167,6 +1170,9 @@ class ProcessRegistry:
         # cgroup (and the messaging control plane with it). This applies to
         # both pipe mode and the PTY path above.
         shell_argv = [user_shell, "-lic", f"set +m; {safe_command}"]
+        from agent.profile_access import sandbox_argv
+
+        shell_argv = sandbox_argv(shell_argv)
         in_supervised_gateway = not _IS_WINDOWS and _is_supervised_gateway_process()
         use_systemd_scope = (
             in_supervised_gateway and _systemd_run_user_scope_available()
@@ -3317,15 +3323,32 @@ def _handle_process(args, **kw):
     # Coerce to string — some models send session_id as an integer
     session_id = str(args.get("session_id", "")) if args.get("session_id") is not None else ""
 
+    try:
+        from tools.approval import get_current_session_key
+
+        current_session_key = get_current_session_key(default="") or ""
+    except Exception:
+        current_session_key = ""
+
+    if action in {"poll", "log", "wait", "kill", "write", "submit", "close"} and session_id:
+        from agent.profile_access import is_profile_admin, isolation_enforced
+
+        if isolation_enforced() and not is_profile_admin():
+            target = process_registry.get(session_id)
+            if target is not None and not (
+                (task_id and target.task_id == task_id)
+                or (current_session_key and target.session_key == current_session_key)
+            ):
+                return tool_error(
+                    "Cross-profile process access denied: the process does not "
+                    "belong to the current session."
+                )
+
     if action == "list":
         # Surface session-scoped background processes (e.g. a forgotten
         # preview server) in addition to this task's own — they share the
         # gateway session_key and can block session reset (#29177).
-        try:
-            from tools.approval import get_current_session_key
-            session_key = get_current_session_key(default="") or ""
-        except Exception:
-            session_key = ""
+        session_key = current_session_key
         return json.dumps(
             {
                 "processes": [

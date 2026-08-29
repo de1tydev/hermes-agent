@@ -209,9 +209,17 @@ def _run_start_phase(
     port = port_override or recipe.port or 8000
     url = f"http://127.0.0.1:{port}{recipe.readiness_path}"
     started = time.monotonic()
+    from agent.profile_access import is_profile_admin, isolation_enforced, sandbox_argv
+
+    if isolation_enforced() and not is_profile_admin():
+        spawn_command = sandbox_argv(["/bin/sh", "-c", recipe.start])
+        use_shell = False
+    else:
+        spawn_command = recipe.start
+        use_shell = True
     proc = subprocess.Popen(
-        recipe.start,
-        shell=True,  # project-authored command; see module docstring
+        spawn_command,
+        shell=use_shell,  # project-authored command; see module docstring
         cwd=str(root),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

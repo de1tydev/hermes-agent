@@ -1649,6 +1649,12 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 2000, task_id: str =
             )
 
         _resolved = _resolve_path_for_task(path, task_id)
+        try:
+            from agent.profile_access import authorize_path
+
+            authorize_path(_resolved, operation="read")
+        except PermissionError as exc:
+            return tool_error(str(exc))
 
         # ── Special-file type guard (stat-based) ──────────────────────
         # The name blocklist above catches /dev/* and /proc/* aliases; this
@@ -2236,12 +2242,16 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
                     session_id: str | None = None) -> str:
     """Write content to a file.
 
-    ``cross_profile`` opts out of the soft cross-Hermes-profile guard. The
-    guard fires only on writes that land in another profile's
-    skills/plugins/cron/memories directory; everything else is unaffected.
-    Pass ``True`` after explicit user direction — same shape as ``force``
-    on the terminal tool.
+    ``cross_profile`` opts out of the legacy soft cross-Hermes-profile guard.
+    When deployment-level Profile isolation is enabled, only the configured
+    administrator can cross the boundary and this flag cannot grant access.
     """
+    try:
+        from agent.profile_access import authorize_path
+
+        authorize_path(_resolve_path_for_task(path, task_id), operation="write")
+    except PermissionError as exc:
+        return tool_error(str(exc))
     sensitive_err = _check_sensitive_path(path, task_id)
     if sensitive_err:
         return tool_error(sensitive_err)
@@ -2329,9 +2339,8 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                session_id: str | None = None) -> str:
     """Patch a file using replace mode or V4A patch format.
 
-    ``cross_profile`` opts out of the soft cross-Hermes-profile guard for
-    targets under another profile's skills/plugins/cron/memories
-    directory. Same shape as ``write_file``'s flag.
+    ``cross_profile`` opts out of the legacy soft cross-Hermes-profile guard.
+    It never overrides deployment-level Profile isolation for non-admin users.
     """
     # Check sensitive paths for both replace (explicit path) and V4A patch (extract paths)
     _paths_to_check = []
@@ -2386,6 +2395,12 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                     return _err
                 _paths_to_check.append(v4a_path)
     for _p in _paths_to_check:
+        try:
+            from agent.profile_access import authorize_path
+
+            authorize_path(_resolve_path_for_task(_p, task_id), operation="write")
+        except PermissionError as exc:
+            return tool_error(str(exc))
         sensitive_err = _check_sensitive_path(_p, task_id)
         if sensitive_err:
             return tool_error(sensitive_err)
@@ -2588,6 +2603,12 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
             resolved_path = _resolve_path_for_task(path, task_id)
         except (OSError, ValueError, RuntimeError):
             resolved_path = None
+        try:
+            from agent.profile_access import authorize_path
+
+            authorize_path(resolved_path or path, operation="read")
+        except PermissionError as exc:
+            return tool_error(str(exc))
         block_error = get_read_block_error(str(resolved_path) if resolved_path else path)
         if block_error:
             return tool_error(block_error)
@@ -2685,7 +2706,7 @@ WRITE_FILE_SCHEMA = {
             "content": {"type": "string", "description": "Complete content to write to the file"},
             "cross_profile": {
                 "type": "boolean",
-                "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under.",
+                "description": "Opt out of the legacy cross-profile soft guard. Defaults to false. When deployment-level Profile isolation is enabled, this is administrator-only and cannot grant a normal user access to another Profile.",
                 "default": False,
             },
         },
@@ -2736,7 +2757,7 @@ PATCH_SCHEMA = {
             },
             "cross_profile": {
                 "type": "boolean",
-                "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories.",
+                "description": "Opt out of the legacy cross-profile soft guard. Defaults to false. When deployment-level Profile isolation is enabled, this is administrator-only and cannot grant a normal user access to another Profile.",
                 "default": False,
             },
         },

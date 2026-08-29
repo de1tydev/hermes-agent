@@ -1774,6 +1774,24 @@ class LocalEnvironment(BaseEnvironment):
         ``HERMES_HOME`` instead — single-word path, guaranteed to exist, same
         string resolves in both Git Bash and native Python.
         """
+        try:
+            from agent.profile_access import (
+                is_profile_admin,
+                isolation_enforced,
+                private_tmp_dir,
+            )
+
+            if isolation_enforced() and not is_profile_admin():
+                return str(private_tmp_dir())
+        except PermissionError:
+            raise
+        except Exception as exc:
+            if os.getenv("HERMES_PROFILE_ISOLATION_ENFORCED", "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }:
+                raise RuntimeError(
+                    f"Profile-isolated temp directory resolution failed: {exc}"
+                ) from exc
         if _IS_WINDOWS:
             # Derive a Windows-safe temp dir under HERMES_HOME.  Using
             # forward slashes makes the same string work unchanged in bash
@@ -1827,6 +1845,9 @@ class LocalEnvironment(BaseEnvironment):
             if init_files:
                 cmd_string = _prepend_shell_init(cmd_string, init_files)
         args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]
+        from agent.profile_access import sandbox_argv
+
+        args = sandbox_argv(args)
         run_env = _make_run_env(self.env)
 
         # Recover when the cwd has been deleted out from under us — usually by

@@ -1320,6 +1320,13 @@ def execute_code(
     from tools.terminal_tool import _get_env_config, _docker_has_host_access
     _env_config = _get_env_config()
     env_type = _env_config["env_type"]
+    from agent.profile_access import is_profile_admin, isolation_enforced
+
+    if isolation_enforced() and not is_profile_admin() and env_type != "local":
+        return tool_error(
+            "Profile-isolated execute_code requires the local Landlock backend; "
+            "refusing an unsandboxed remote execution backend."
+        )
 
     # execute_code runs arbitrary Python (subprocess/os.system/...) that never
     # passes through terminal()/DANGEROUS_PATTERNS, so guard the whole script
@@ -1371,7 +1378,12 @@ def execute_code(
         sandbox_tools = SANDBOX_ALLOWED_TOOLS
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
-    tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
+    if isolation_enforced() and not is_profile_admin():
+        from agent.profile_access import private_tmp_dir
+
+        tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_", dir=private_tmp_dir())
+    else:
+        tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
     # Use /tmp on macOS to avoid the long /var/folders/... path that pushes
     # Unix domain socket paths past the 104-byte macOS AF_UNIX limit.
     # On Linux, tempfile.gettempdir() already returns /tmp.
@@ -1383,13 +1395,24 @@ def execute_code(
     # same ephemeral port, same 1-connection listen queue, same serialized
     # request/response framing.  The generated client reads the transport
     # selector from HERMES_RPC_SOCKET (path vs. ``tcp://host:port``).
-    _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
-    _use_tcp_rpc = _IS_WINDOWS
+    if isolation_enforced() and not is_profile_admin():
+        from agent.profile_access import private_rpc_dir
+
+        _sock_tmpdir = str(private_rpc_dir())
+        _sock_name = f"r_{uuid.uuid4().hex[:8]}.sock"
+    else:
+        _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+        _sock_name = f"hermes_rpc_{uuid.uuid4().hex}.sock"
+    _candidate_sock_path = os.path.join(_sock_tmpdir, _sock_name)
+    # Linux/macOS AF_UNIX paths are typically capped near 104-108 bytes.
+    # Loopback TCP retains token authentication and is safer than truncating
+    # or placing a shared socket outside the owning Profile.
+    _use_tcp_rpc = _IS_WINDOWS or len(os.fsencode(_candidate_sock_path)) >= 100
     if _use_tcp_rpc:
         sock_path = None  # not used on Windows; TCP endpoint stored below
         rpc_endpoint = None  # set after bind()
     else:
-        sock_path = os.path.join(_sock_tmpdir, f"hermes_rpc_{uuid.uuid4().hex}.sock")
+        sock_path = _candidate_sock_path
         rpc_endpoint = sock_path
 
     tool_call_log: list = []
@@ -1541,8 +1564,11 @@ def execute_code(
             _pp_parts.append(_existing_pp)
         child_env["PYTHONPATH"] = os.pathsep.join(_pp_parts)
 
+        from agent.profile_access import sandbox_argv
+
+        child_argv = sandbox_argv([_child_python, _script_path])
         proc = subprocess.Popen(
-            [_child_python, _script_path],
+            child_argv,
             cwd=_child_cwd,
             env=child_env,
             stdout=subprocess.PIPE,
