@@ -1,7 +1,7 @@
 name: hermes-tode68
 
 x-hermes-gateway: &hermes-gateway
-  image: tode/hermes-agent:tode68-20260829-cronfix
+  image: tode/hermes-agent:tode68-20260829-cronfix2
   restart: unless-stopped
   network_mode: host
   stop_grace_period: 120s
@@ -48,4 +48,5 @@ services:
       HERMES_ENV_OVERLAY: /opt/data/gateway-secondary.env
       HERMES_GATEWAY_LOCK_DIR: /opt/data/state/gateway-locks-secondary
       HERMES_GATEWAY_NO_SUPERVISE: "true"
+      HERMES_GATEWAY_CRON_ENABLED: "false"
     command: ["gateway", "run", "--no-supervise"]

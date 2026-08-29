@@ -30881,6 +30881,19 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, loop=None, in
     InProcessCronScheduler().start(stop_event, adapters=adapters, loop=loop, interval=interval)
 
 
+def _gateway_cron_scheduler_enabled() -> bool:
+    """Whether this Gateway process owns scheduled-job dispatch.
+
+    Shared-state multi-Gateway deployments need a deliberate single writer:
+    file claims prevent duplicate execution, but whichever Gateway wins would
+    otherwise deliver through its own app-scoped adapter.  A secondary Feishu
+    app cannot address the primary app's ``open_id`` Home Channels.  Default
+    remains enabled for every existing single-Gateway deployment.
+    """
+    raw = os.getenv("HERMES_GATEWAY_CRON_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def _stop_cron_provider(provider) -> None:
     """Stop a cron provider without letting it choose the gateway exit code."""
     try:
@@ -31781,14 +31794,22 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         cron_start_kwargs["can_dispatch"] = lambda: not (
             runner._draining or runner._external_drain_active
         )
-    cron_thread = threading.Thread(
-        target=cron_provider.start,
-        args=(cron_stop,),
-        kwargs=cron_start_kwargs,
-        daemon=True,
-        name="cron-scheduler",
-    )
-    cron_thread.start()
+    cron_thread: Optional[threading.Thread] = None
+    cron_scheduler_enabled = _gateway_cron_scheduler_enabled()
+    if cron_scheduler_enabled:
+        cron_thread = threading.Thread(
+            target=cron_provider.start,
+            args=(cron_stop,),
+            kwargs=cron_start_kwargs,
+            daemon=True,
+            name="cron-scheduler",
+        )
+        cron_thread.start()
+    else:
+        logger.info(
+            "Cron scheduler disabled for this Gateway "
+            "(HERMES_GATEWAY_CRON_ENABLED=false); housekeeping remains active"
+        )
 
     # Preflight tell for the hosted fire path: an external cron provider
     # (Chronos) delivers scheduled fires over HTTP to THIS process's
@@ -31799,7 +31820,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # dashboard forwarder while manual runs keep working, which users
     # reliably misread as a job bug. Say it loudly ONCE at startup, when
     # it is fixable, instead of letting the first miss say it at 2am.
-    if not isinstance(cron_provider, InProcessCronScheduler):
+    if cron_scheduler_enabled and not isinstance(cron_provider, InProcessCronScheduler):
         try:
             _has_api_server = Platform.API_SERVER in (runner.adapters or {})
         except Exception:
@@ -31875,12 +31896,13 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # silently dropped (#58818). Awaiting keeps the loop alive so the in-flight
     # delivery finishes before we tear down.
     cron_stop.set()
-    _stop_cron_provider(cron_provider)
-    if not await _await_thread_exit(cron_thread, timeout=_CRON_SHUTDOWN_DRAIN_TIMEOUT):
-        logger.warning(
-            "Cron ticker did not exit within %.0fs of shutdown — an in-flight "
-            "delivery may have been dropped.", _CRON_SHUTDOWN_DRAIN_TIMEOUT,
-        )
+    if cron_thread is not None:
+        _stop_cron_provider(cron_provider)
+        if not await _await_thread_exit(cron_thread, timeout=_CRON_SHUTDOWN_DRAIN_TIMEOUT):
+            logger.warning(
+                "Cron ticker did not exit within %.0fs of shutdown — an in-flight "
+                "delivery may have been dropped.", _CRON_SHUTDOWN_DRAIN_TIMEOUT,
+            )
     await _await_thread_exit(
         housekeeping_thread, timeout=_HOUSEKEEPING_SHUTDOWN_DRAIN_TIMEOUT
     )
