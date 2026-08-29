@@ -2286,10 +2286,39 @@ def _get_config_home_channel(platform_name: str):
     canonical store here fixes that for every relay-fronted platform at once.
     """
     try:
-        from gateway.config import load_gateway_config, Platform
+        from agent.secret_scope import is_multiplex_active
+        from gateway.config import HomeChannel, load_gateway_config, Platform
+
+        platform = Platform(platform_name.lower())
+        if is_multiplex_active():
+            # In a multiplex gateway, ``load_hermes_dotenv`` may have loaded a
+            # different profile's legacy *_HOME_CHANNEL mirror into the
+            # process-global environment.  ``load_gateway_config`` applies env
+            # overrides after YAML, so using it here can replace the owning
+            # profile's canonical Home Channel with that stale value.  Read the
+            # active profile's config.yaml directly; load_config is keyed by
+            # the context-local HERMES_HOME and does not apply env overrides.
+            from hermes_cli.config import load_config
+
+            raw = load_config() or {}
+            platforms = raw.get("platforms") if isinstance(raw, dict) else None
+            platform_cfg = (
+                platforms.get(platform.value)
+                if isinstance(platforms, dict)
+                else None
+            )
+            home = (
+                platform_cfg.get("home_channel")
+                if isinstance(platform_cfg, dict)
+                else None
+            )
+            if not isinstance(home, dict) or not home.get("chat_id"):
+                return None
+            canonical = dict(home)
+            canonical.setdefault("platform", platform.value)
+            return HomeChannel.from_dict(canonical)
 
         config = load_gateway_config()
-        platform = Platform(platform_name.lower())
         return config.get_home_channel(platform)
     except Exception:
         logger.debug(
@@ -2319,6 +2348,18 @@ def _get_home_target_chat_id(platform_name: str) -> str:
     operator override keeps winning) → legacy env var name → the canonical
     ``home_channel`` block persisted in config.yaml by ``/sethome``.
     """
+    try:
+        from agent.secret_scope import is_multiplex_active
+
+        multiplex = is_multiplex_active()
+    except Exception:
+        multiplex = False
+    if multiplex:
+        # Profile config is authoritative and isolated.  A process env mirror
+        # can belong to whichever profile loaded dotenv most recently.
+        home = _get_config_home_channel(platform_name)
+        return str(home.chat_id) if home is not None and home.chat_id else ""
+
     value = _env_home_target_chat_id(platform_name)
     if value:
         return value
@@ -2339,6 +2380,20 @@ def _get_home_target_thread_id(platform_name: str) -> Optional[str]:
     cron at a dedicated topic via this env var lets replies work as expected
     without changing the lobby invariant.
     """
+    try:
+        from agent.secret_scope import is_multiplex_active
+
+        multiplex = is_multiplex_active()
+    except Exception:
+        multiplex = False
+    if multiplex:
+        home = _get_config_home_channel(platform_name)
+        return (
+            str(home.thread_id)
+            if home is not None and home.thread_id
+            else None
+        )
+
     env_var = _resolve_home_env_var(platform_name)
     if platform_name.lower() == "telegram":
         cron_thread = os.getenv("TELEGRAM_CRON_THREAD_ID", "").strip()
@@ -5093,7 +5148,7 @@ def _preflight_check_provider_key(job: dict, cfg: dict) -> Optional[str]:
     return None
 
 
-def _preflight_check_delivery(job: dict) -> Optional[str]:
+def _preflight_check_delivery(job: dict, *, adapters=None) -> Optional[str]:
     """Check the job's delivery target(s) resolve to configured platforms.
 
     ``local``/``origin`` (and the ``all`` routing token) need no gateway
@@ -5121,6 +5176,16 @@ def _preflight_check_delivery(job: dict) -> Optional[str]:
         return None
 
     connected: Optional[set] = None
+    if adapters is not None:
+        # The live Gateway adapter registry is authoritative for an in-process
+        # cron fire.  Multiplex Profiles intentionally do not carry transport
+        # credentials, so reloading their own gateway config would report the
+        # platform disconnected even while the root Gateway is connected.
+        connected = {
+            str(getattr(platform, "value", platform)).lower()
+            for platform in adapters
+        }
+        connected |= _relay_fronted_delivery_platforms(connected)
     for platform_name in platform_parts:
         if not _is_known_delivery_platform(platform_name):
             return (
@@ -5208,7 +5273,7 @@ def _preflight_check_skills(job: dict) -> Optional[str]:
     return None
 
 
-def _preflight_job_config(job: dict, cfg: dict) -> Optional[str]:
+def _preflight_job_config(job: dict, cfg: dict, *, adapters=None) -> Optional[str]:
     """Pre-dispatch configuration validation (T1-26).
 
     Returns a human-readable reason when the job's configuration cannot
@@ -5227,7 +5292,7 @@ def _preflight_job_config(job: dict, cfg: dict) -> Optional[str]:
     for name, check in (
         ("provider_key", lambda: _preflight_check_provider_key(job, cfg)),
         ("skills", lambda: _preflight_check_skills(job)),
-        ("delivery", lambda: _preflight_check_delivery(job)),
+        ("delivery", lambda: _preflight_check_delivery(job, adapters=adapters)),
     ):
         try:
             reason = check()
@@ -5371,6 +5436,7 @@ def run_job(
     defer_agent_teardown: Optional[list] = None,
     extra_prompt: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None,
+    adapters=None,
 ) -> tuple[bool, str, str, Optional[str]]:
     """
     Execute a single cron job.
@@ -6076,7 +6142,7 @@ def run_job(
         _pf_reason = None
         try:
             if _cron_preflight_enabled(_cfg):
-                _pf_reason = _preflight_job_config(job, _cfg)
+                _pf_reason = _preflight_job_config(job, _cfg, adapters=adapters)
                 if not _pf_reason and job.get("preflight_alerted"):
                     # Configuration validates again — clear the alert-once
                     # marker so a FUTURE config break re-alerts.
@@ -7127,19 +7193,20 @@ def _run_one_job_body(
         # interpreter-shutdown guard in _deliver_result.
         _deferred_agents: list = []
         try:
+            _run_kwargs = {
+                "defer_agent_teardown": _deferred_agents,
+                "extra_prompt": extra_prompt,
+            }
+            # Keep the historical call shape for standalone/manual callers and
+            # older third-party test doubles; only an in-process Gateway has a
+            # live adapter registry to pass to preflight.
+            if adapters is not None:
+                _run_kwargs["adapters"] = adapters
             if fire_claim_lost is None:
-                success, output, final_response, error = run_job(
-                    job,
-                    defer_agent_teardown=_deferred_agents,
-                    extra_prompt=extra_prompt,
-                )
+                success, output, final_response, error = run_job(job, **_run_kwargs)
             else:
-                success, output, final_response, error = run_job(
-                    job,
-                    defer_agent_teardown=_deferred_agents,
-                    extra_prompt=extra_prompt,
-                    cancel_event=fire_claim_lost,
-                )
+                _run_kwargs["cancel_event"] = fire_claim_lost
+                success, output, final_response, error = run_job(job, **_run_kwargs)
         except BaseException:
             # run_job's finally still hands back the agent when it raises; tear
             # it down here so a failed run never leaks its async resources
