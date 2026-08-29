@@ -3320,6 +3320,33 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
 
         from gateway.delivery import resolve_delivery_transport
 
+        # A multiplex Profile owns its Home Channel and job state, but the
+        # process-level Gateway owns the connected native adapter.  Profile
+        # config therefore commonly contains a home_channel-only platform
+        # block whose default ``enabled`` value is false.  Treat an adapter
+        # that is actually present in the live registry as enabled for this
+        # delivery config snapshot; otherwise preflight passes against the
+        # live adapter but the real send is rejected as "not configured".
+        try:
+            from agent.secret_scope import is_multiplex_active
+
+            multiplex_native = (
+                is_multiplex_active()
+                and adapters is not None
+                and adapters.get(platform) is not None
+            )
+        except Exception:
+            multiplex_native = False
+        if multiplex_native:
+            from gateway.config import PlatformConfig
+
+            native_config = config.platforms.get(platform)
+            if native_config is None:
+                native_config = PlatformConfig(enabled=True)
+                config.platforms[platform] = native_config
+            else:
+                native_config.enabled = True
+
         transport = resolve_delivery_transport(platform, config, adapters)
         if transport is not None:
             pconfig = transport.config

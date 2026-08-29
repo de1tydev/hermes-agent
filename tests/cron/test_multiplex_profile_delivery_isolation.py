@@ -7,6 +7,8 @@ owning profile intentionally carries no transport credentials.
 """
 
 from pathlib import Path
+from concurrent.futures import Future
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.secret_scope import set_multiplex_active
 from cron import scheduler as sched
@@ -66,3 +68,53 @@ def test_live_gateway_adapter_satisfies_profile_delivery_preflight(monkeypatch):
         {"deliver": "feishu"},
         adapters={Platform.FEISHU: object()},
     ) is None
+
+
+def test_live_gateway_adapter_delivers_when_profile_transport_is_disabled():
+    """The root live adapter, not Profile credentials, owns cron delivery."""
+    from gateway.config import GatewayConfig, PlatformConfig
+
+    adapter = AsyncMock()
+    adapter.send.return_value = MagicMock(success=True, message_id="om_test")
+    config = GatewayConfig(
+        platforms={Platform.FEISHU: PlatformConfig(enabled=False)}
+    )
+    loop = MagicMock()
+    loop.is_running.return_value = True
+
+    def run_coro(coro, _loop):
+        import asyncio
+
+        future = Future()
+        try:
+            future.set_result(asyncio.run(coro))
+        except BaseException as exc:  # noqa: BLE001
+            future.set_exception(exc)
+        return future
+
+    job = {
+        "id": "multiplex-live-delivery",
+        "deliver": "origin",
+        "origin": {"platform": "feishu", "chat_id": "oc_owner_chat"},
+    }
+
+    set_multiplex_active(True)
+    try:
+        with (
+            patch("gateway.config.load_gateway_config", return_value=config),
+            patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=run_coro),
+            patch("tools.send_message_tool._send_to_platform", new=AsyncMock()) as standalone,
+        ):
+            result = sched._deliver_result(
+                job,
+                "scheduled result",
+                adapters={Platform.FEISHU: adapter},
+                loop=loop,
+            )
+    finally:
+        set_multiplex_active(False)
+
+    assert result is None
+    adapter.send.assert_awaited_once()
+    standalone.assert_not_awaited()

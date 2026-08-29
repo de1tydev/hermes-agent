@@ -1,7 +1,7 @@
 name: hermes-tode68
 
 x-hermes-gateway: &hermes-gateway
-  image: tode/hermes-agent:tode68-20260829-cronfix2
+  image: tode/hermes-agent:tode68-20260829-cronfix3
   restart: unless-stopped
   network_mode: host
   stop_grace_period: 120s
