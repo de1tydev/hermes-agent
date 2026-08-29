@@ -117,3 +117,17 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
         assert (profile / "skills/legacy-memory-search/scripts/search.py").is_file()
         config = yaml.safe_load((profile / "config.yaml").read_text())
         assert config["approvals"]["destructive_slash_confirm"] is False
+        assert config["display"]["show_commentary"] is False
+        assert config["display"]["memory_notifications"] == "off"
+        assert config["display"]["background_process_notifications"] == "off"
+        assert config["display"]["platforms"]["feishu"] == {
+            "tool_progress": "off",
+            "show_reasoning": False,
+            "thinking_progress": False,
+            "streaming": False,
+            "interim_assistant_messages": False,
+            "long_running_notifications": False,
+            "busy_ack_detail": False,
+            "busy_steer_ack_enabled": False,
+            "live_status": "off",
+        }

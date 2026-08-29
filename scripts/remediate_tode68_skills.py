@@ -54,6 +54,18 @@ SKILL_ENV_KEYS = {
     "ZHIPU_API_KEY",
 }
 
+QUIET_FEISHU_DISPLAY = {
+    "tool_progress": "off",
+    "show_reasoning": False,
+    "thinking_progress": False,
+    "streaming": False,
+    "interim_assistant_messages": False,
+    "long_running_notifications": False,
+    "busy_ack_detail": False,
+    "busy_steer_ack_enabled": False,
+    "live_status": "off",
+}
+
 
 def parse_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -169,6 +181,14 @@ def update_config(path: Path, *, profile: bool = False) -> None:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     approvals = data.setdefault("approvals", {})
     approvals["destructive_slash_confirm"] = False
+    display = data.setdefault("display", {})
+    display["show_commentary"] = False
+    display["memory_notifications"] = "off"
+    display["background_process_notifications"] = "off"
+    display["tool_progress_command"] = False
+    display.setdefault("platforms", {}).setdefault("feishu", {}).update(
+        QUIET_FEISHU_DISPLAY
+    )
     if profile:
         feishu = (data.get("platforms") or {}).get("feishu")
         if isinstance(feishu, dict) and feishu.get("home_channel"):

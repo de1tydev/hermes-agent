@@ -734,6 +734,22 @@ agent:
   reasoning_effort: high
 approvals:
   destructive_slash_confirm: false
+display:
+  show_commentary: false
+  memory_notifications: "off"
+  background_process_notifications: "off"
+  tool_progress_command: false
+  platforms:
+    feishu:
+      tool_progress: "off"
+      show_reasoning: false
+      thinking_progress: false
+      streaming: false
+      interim_assistant_messages: false
+      long_running_notifications: false
+      busy_ack_detail: false
+      busy_steer_ack_enabled: false
+      live_status: "off"
 terminal:
   backend: local
   cwd: {yaml_string(f'/opt/data/profiles/{profile}/workspace')}

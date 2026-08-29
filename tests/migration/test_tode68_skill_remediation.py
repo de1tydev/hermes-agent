@@ -148,6 +148,20 @@ def test_remediation_materializes_skills_credentials_tools_and_approval_policy(t
     config = yaml.safe_load((profile / "config.yaml").read_text())
     assert config["approvals"]["destructive_slash_confirm"] is False
     assert "enabled" not in config["platforms"]["feishu"]
+    assert config["display"]["show_commentary"] is False
+    assert config["display"]["memory_notifications"] == "off"
+    assert config["display"]["background_process_notifications"] == "off"
+    assert config["display"]["platforms"]["feishu"] == {
+        "tool_progress": "off",
+        "show_reasoning": False,
+        "thinking_progress": False,
+        "streaming": False,
+        "interim_assistant_messages": False,
+        "long_running_notifications": False,
+        "busy_ack_detail": False,
+        "busy_steer_ack_enabled": False,
+        "live_status": "off",
+    }
     env = (profile / ".env").read_text()
     assert "BAIDU_API_KEY=baidu" in env
     assert "GITEA_TOKEN=gitea-token" in env
