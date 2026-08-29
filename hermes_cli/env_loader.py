@@ -836,8 +836,8 @@ def _load_secrets_config(home_path: Path) -> dict:
 def _process_hermes_home() -> Path:
     """The HERMES_HOME the shared config cache is keyed to."""
     try:
-        from hermes_constants import get_hermes_home
+        from hermes_constants import get_process_hermes_home
 
-        return get_hermes_home()
+        return get_process_hermes_home()
     except Exception:
         return Path.home() / ".hermes"

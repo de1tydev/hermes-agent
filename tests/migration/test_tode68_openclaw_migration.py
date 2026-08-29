@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import yaml
+
 from scripts.migrate_tode68_openclaw import inventory, run
 
 
@@ -113,3 +115,5 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
         assert not (profile / "workspace/sessions/chat.jsonl").exists()
         assert (profile / "skills/sample/SKILL.md").is_file()
         assert (profile / "skills/legacy-memory-search/scripts/search.py").is_file()
+        config = yaml.safe_load((profile / "config.yaml").read_text())
+        assert config["approvals"]["destructive_slash_confirm"] is False

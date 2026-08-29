@@ -732,6 +732,8 @@ agent:
   max_turns: 1000
   gateway_timeout: 3600
   reasoning_effort: high
+approvals:
+  destructive_slash_confirm: false
 terminal:
   backend: local
   cwd: {yaml_string(f'/opt/data/profiles/{profile}/workspace')}

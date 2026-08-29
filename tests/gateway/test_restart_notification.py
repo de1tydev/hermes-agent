@@ -132,6 +132,35 @@ async def test_sethome_updates_running_config_for_same_process_restart(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_sethome_does_not_enable_profile_adapter_in_multiplex_mode(
+    tmp_path, monkeypatch
+):
+    """A Profile home destination must not start a credential-less adapter."""
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr("hermes_cli.config.save_env_value", lambda *_args: None)
+    calls = []
+    monkeypatch.setattr(
+        "gateway.slash_commands.persist_home_channel",
+        lambda home, **kwargs: calls.append((home, kwargs)),
+    )
+
+    runner, _adapter = make_restart_runner()
+    runner.config.multiplex_profiles = True
+    source = make_restart_source(chat_id="profile-home")
+    event = MessageEvent(
+        text="/sethome",
+        message_type=MessageType.TEXT,
+        source=source,
+        message_id="m-profile-home",
+    )
+
+    await runner._handle_set_home_command(event)
+
+    assert len(calls) == 1
+    assert calls[0][1]["enabled_if_new"] is False
+
+
+@pytest.mark.asyncio
 async def test_sethome_preserves_thread_target_for_same_process_restart(tmp_path, monkeypatch):
     """/sethome from a topic/thread stores the thread-aware home target."""
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
@@ -411,5 +440,4 @@ async def test_shutdown_notifications_are_fully_muted_when_flag_disabled():
     await runner._notify_active_sessions_of_shutdown()
 
     adapter.send.assert_not_awaited()
-
 

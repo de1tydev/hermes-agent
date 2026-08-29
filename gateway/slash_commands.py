@@ -3310,7 +3310,13 @@ class GatewaySlashCommandsMixin:
         # config.yaml is canonical because it can persist the authenticated
         # logical-target provenance required by Relay after a restart.
         try:
-            persist_home_channel(home, enabled_if_new=not via_relay)
+            # In a multiplex gateway the process-level adapter owns transport
+            # credentials. A routed Profile may persist its own destination,
+            # but must not enable a second adapter that has no transport secret.
+            enable_platform = not via_relay and not getattr(
+                getattr(self, "config", None), "multiplex_profiles", False
+            )
+            persist_home_channel(home, enabled_if_new=enable_platform)
         except Exception as e:
             return t("gateway.set_home.save_failed", error=e)
 

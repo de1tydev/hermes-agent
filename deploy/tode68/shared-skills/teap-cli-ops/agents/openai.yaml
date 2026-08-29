@@ -1,0 +1,4 @@
+interface:
+  display_name: "TEAP CLI Ops"
+  short_description: "TEAP 建模、任务生命周期、结果诊断与报告助手"
+  default_prompt: "使用 $teap-cli-ops 通过 teap CLI 安全地编辑 case、执行或取消 task，并分析或删除 result。"

@@ -67,6 +67,37 @@ def test_process_env_overlay_skips_profile_reload(tmp_path, monkeypatch):
     assert "FEISHU_APP_ID" not in os.environ
 
 
+def test_process_env_overlay_skips_context_scoped_profile_reload(
+    tmp_path, monkeypatch
+):
+    """A multiplex profile override must not reclassify the root overlay."""
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    home = tmp_path / "hermes"
+    profile = home / "profiles/example"
+    profile.mkdir(parents=True)
+    overlay = home / "gateway-secondary.env"
+    overlay.write_text("FEISHU_APP_ID=secondary\n", encoding="utf-8")
+    profile_env = profile / ".env"
+    profile_env.write_text("OPENAI_API_KEY=profile-key\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_ENV_OVERLAY", str(overlay))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+
+    token = set_hermes_home_override(profile)
+    try:
+        loaded = load_hermes_dotenv(
+            hermes_home=profile, load_external_secrets=False
+        )
+    finally:
+        reset_hermes_home_override(token)
+
+    assert loaded == [profile_env]
+    assert os.environ["OPENAI_API_KEY"] == "profile-key"
+    assert "FEISHU_APP_ID" not in os.environ
+
+
 def test_recovered_update_retry_skips_external_secret_sources(tmp_path, monkeypatch):
     """The post-recovery updater must not remap native vault dependencies."""
     import hermes_cli.env_loader as env_loader

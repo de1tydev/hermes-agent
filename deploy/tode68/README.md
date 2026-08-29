@@ -23,3 +23,16 @@ docker start openclaw-gateway
 ```
 
 原 `/srv/openclaw` 和 `/opt/openclaw-docker/compose.yaml` 不修改；只读冻结副本保存在 `/srv/hermes-backups/openclaw-20260829-pre-hermes-cutover`，至少保留四周。
+
+## Skill 兼容化
+
+原迁移清单中进入 review 区的 17 个 Skill 已在 `shared-skills/` 中完成 Hermes 适配。生产修复由 `scripts/remediate_tode68_skills.py` 执行，负责：
+
+- 去除 OpenClaw 专属路径、软链接、虚拟环境、依赖缓存和内嵌凭据文件；
+- 将第三方 API Key 改为当前 Profile 的 `required_environment_variables`；
+- 把 Skill 同步到 canonical shared root 和所有现有 Profile；
+- 安装 `teap`、`jira`、`lark-cli` 到 `/srv/hermes/bin`；
+- 关闭 `/new`、`/reset`、`/clear`、`/undo` 的额外确认提示；
+- 生成 `/srv/hermes/migration/skill-remediation-receipt.json`。
+
+旧环境没有配置 `GEMINI_API_KEY`、`DASHSCOPE_API_KEY`、`EVOLINK_API_KEY` 时，对应图片 Skill 会保留并显示缺少配置，不会伪造或复用其他 Provider 的凭据。

@@ -1,7 +1,7 @@
 name: hermes-tode68
 
 x-hermes-gateway: &hermes-gateway
-  image: tode/hermes-agent:3a050bd334
+  image: tode/hermes-agent:tode68-20260829-skillfix
   restart: unless-stopped
   network_mode: host
   stop_grace_period: 120s
@@ -10,6 +10,7 @@ x-hermes-gateway: &hermes-gateway
   environment:
     HERMES_UID: "10000"
     HERMES_GID: "10000"
+    PATH: /opt/data/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     GATEWAY_MULTIPLEX_PROFILES: "true"
     HERMES_GATEWAY_LOCK_DIR: /opt/data/state/gateway-locks-primary
   command: ["gateway", "run"]
@@ -40,6 +41,7 @@ services:
     environment:
       HERMES_UID: "10000"
       HERMES_GID: "10000"
+      PATH: /opt/data/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       GATEWAY_MULTIPLEX_PROFILES: "true"
       API_SERVER_PORT: "8643"
       HERMES_CONTAINER_SKIP_PROFILE_RECONCILE: "true"
