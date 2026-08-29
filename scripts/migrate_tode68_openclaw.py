@@ -741,6 +741,19 @@ providers:
       glm-5-turbo:
         context_length: 202752
 fallback_providers: []
+mcp_servers:
+  zhipu-web-search:
+    url: https://open.bigmodel.cn/api/mcp/web_search_prime/mcp
+    headers:
+      Authorization: "Bearer ${{ZHIPU_API_KEY}}"
+  zhipu-web-reader:
+    url: https://open.bigmodel.cn/api/mcp/web_reader/mcp
+    headers:
+      Authorization: "Bearer ${{ZHIPU_API_KEY}}"
+  zhipu-zread:
+    url: https://open.bigmodel.cn/api/mcp/zread/mcp
+    headers:
+      Authorization: "Bearer ${{ZHIPU_API_KEY}}"
 agent:
   max_turns: 1000
   gateway_timeout: 3600

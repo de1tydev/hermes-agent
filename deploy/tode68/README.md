@@ -36,6 +36,7 @@ docker start openclaw-gateway
 - 飞书只发送最终答复，关闭工具进度、reasoning、commentary、流式草稿和长任务心跳；
 - 每个已路由单聊或群聊以自身作为该 Profile 的 Home Channel；新聊天自动建 Profile 时同步写入，无需手工 `/sethome`；
 - 使用 `scripts/migrate_tode68_openclaw_cron.py` 将 OpenClaw 用户/业务定时任务按路由导入各 Profile；保留启停状态，不迁移执行历史，OpenClaw 内部维护任务进入审计清单而不继续执行；
+- 使用 `scripts/reconcile_tode68_dm_profiles.py` 将旧 open_id 按飞书应用转换为一次性 DM 身份别名，首次联系后永久绑定 chat_id；同一成员在不同机器人聊天中仍保持不同 Profile。脚本同时为所有 Profile 配置原生智谱 Search、Reader、Zread MCP，并让新 Profile 安全继承 `ZHIPU_API_KEY`；
 - 生成 `/srv/hermes/migration/skill-remediation-receipt.json`。
 
 旧环境没有配置 `GEMINI_API_KEY`、`DASHSCOPE_API_KEY`、`EVOLINK_API_KEY` 时，对应图片 Skill 会保留并显示缺少配置，不会伪造或复用其他 Provider 的凭据。

@@ -118,6 +118,15 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
         config = yaml.safe_load((profile / "config.yaml").read_text())
         assert config["timezone"] == "Asia/Shanghai"
         assert config["approvals"]["destructive_slash_confirm"] is False
+        assert set(config["mcp_servers"]) == {
+            "zhipu-web-search",
+            "zhipu-web-reader",
+            "zhipu-zread",
+        }
+        assert all(
+            server["headers"]["Authorization"] == "Bearer ${ZHIPU_API_KEY}"
+            for server in config["mcp_servers"].values()
+        )
         assert config["display"]["show_commentary"] is False
         assert config["display"]["memory_notifications"] == "off"
         assert config["display"]["background_process_notifications"] == "off"

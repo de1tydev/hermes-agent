@@ -62,6 +62,7 @@ class ProfileIdentityRegistry:
             "OPENROUTER_API_KEY",
             "TODE_API_KEY",
             "XAI_API_KEY",
+            "ZHIPU_API_KEY",
         }
     )
 
@@ -82,7 +83,14 @@ class ProfileIdentityRegistry:
         chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
         if chat_type == "dm":
             kind = "dm"
-            identity = str(getattr(source, "user_id", "") or "").strip()
+            # Feishu isolation is conversation-scoped, not person-scoped.
+            # open_id differs by app, while tenant user_id / union_id can be
+            # shared across two bot conversations. chat_id is the one stable
+            # boundary that preserves "one distinct chat = one Profile".
+            if platform == "feishu":
+                identity = str(getattr(source, "chat_id", "") or "").strip()
+            else:
+                identity = str(getattr(source, "user_id", "") or "").strip()
         else:
             kind = "group"
             identity = str(getattr(source, "chat_id", "") or "").strip()
@@ -98,6 +106,48 @@ class ProfileIdentityRegistry:
         return f"{platform}:{kind}:sha256:{digest}", f"sha256:{digest}", kind
 
     @staticmethod
+    def _legacy_dm_alias_candidates(source: Any) -> list[tuple[str, str, str]]:
+        """Return app-scoped legacy person aliases for a Feishu DM.
+
+        These aliases are migration bridges only. They may claim exactly one
+        chat_id and never become the durable routing boundary, so the same
+        person talking to another bot/chat still receives a separate Profile.
+        """
+        platform_obj = getattr(source, "platform", None)
+        platform = str(getattr(platform_obj, "value", platform_obj) or "").strip().lower()
+        chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+        if platform != "feishu" or chat_type != "dm":
+            return []
+        adapter = None
+        adapter_ref = getattr(source, "_transport_adapter_ref", None)
+        if callable(adapter_ref):
+            try:
+                adapter = adapter_ref()
+            except Exception:
+                adapter = None
+        app_id = str(getattr(adapter, "_app_id", "") or "").strip()
+        if not app_id:
+            return []
+        result: list[tuple[str, str, str]] = []
+        for alias_kind, attr in (("user_id", "user_id"), ("union_id", "user_id_alt")):
+            identity = str(getattr(source, attr, "") or "").strip()
+            if not identity:
+                continue
+            digest = hashlib.sha256(
+                f"feishu\0dm-alias\0{app_id}\0{alias_kind}\0{identity}".encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            result.append(
+                (
+                    f"feishu:dm-alias:{alias_kind}:sha256:{digest}",
+                    f"sha256:{digest}",
+                    alias_kind,
+                )
+            )
+        return result
+
+    @staticmethod
     def deterministic_profile_name(source: Any) -> str:
         key, digest, kind = ProfileIdentityRegistry.identity_for_source(source)
         platform = key.split(":", 1)[0]
@@ -107,9 +157,9 @@ class ProfileIdentityRegistry:
         key, digest, kind = self.identity_for_source(source)
         data = self._read_registry()
         binding = data["bindings"].get(key)
-        if binding is None:
-            return None
-        return self._validate_binding(binding, source, digest, kind)
+        if binding is not None:
+            return self._validate_binding(binding, source, digest, kind)
+        return self._legacy_dm_alias_profile(data, source, digest)
 
     def resolve_or_provision(
         self,
@@ -139,19 +189,44 @@ class ProfileIdentityRegistry:
                     if binding is not None
                     else None
                 )
+                legacy_profile = self._legacy_dm_alias_profile(data, source, digest)
+                if (
+                    dynamic_profile
+                    and legacy_profile
+                    and dynamic_profile != legacy_profile
+                ):
+                    raise ProfileProvisionRejected(
+                        "profile_route_conflict",
+                        "chat and legacy identity routes disagree",
+                    )
+                effective_profile = dynamic_profile or legacy_profile
                 if static_profile:
-                    if dynamic_profile and dynamic_profile != static_profile:
+                    if effective_profile and effective_profile != static_profile:
                         raise ProfileProvisionRejected(
                             "profile_route_conflict",
                             "static and dynamic identity routes disagree",
                         )
                     self._require_served(static_profile, profile_allowlist)
+                    if legacy_profile and binding is None:
+                        self._claim_legacy_dm_alias(
+                            data, source, digest, kind, static_profile
+                        )
+                        self._write_registry(data)
                     return static_profile
                 if dynamic_profile:
                     self._require_existing_and_served(
                         dynamic_profile, profile_allowlist
                     )
                     return dynamic_profile
+                if legacy_profile:
+                    self._require_existing_and_served(
+                        legacy_profile, profile_allowlist
+                    )
+                    self._claim_legacy_dm_alias(
+                        data, source, digest, kind, legacy_profile
+                    )
+                    self._write_registry(data)
+                    return legacy_profile
 
                 profile = self.deterministic_profile_name(source)
                 self._require_served(profile, profile_allowlist)
@@ -171,7 +246,11 @@ class ProfileIdentityRegistry:
 
     def _read_registry(self) -> dict[str, Any]:
         if not self.registry_path.exists():
-            return {"schema_version": self.SCHEMA_VERSION, "bindings": {}}
+            return {
+                "schema_version": self.SCHEMA_VERSION,
+                "bindings": {},
+                "legacy_dm_aliases": {},
+            }
         try:
             data = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -182,11 +261,75 @@ class ProfileIdentityRegistry:
             not isinstance(data, dict)
             or data.get("schema_version") != self.SCHEMA_VERSION
             or not isinstance(data.get("bindings"), dict)
+            or not isinstance(data.get("legacy_dm_aliases", {}), dict)
         ):
             raise ProfileProvisionRejected(
                 "profile_registry_invalid", "identity registry schema is invalid"
             )
+        data.setdefault("legacy_dm_aliases", {})
         return data
+
+    def _legacy_dm_alias_profile(
+        self,
+        data: dict[str, Any],
+        source: Any,
+        chat_digest: str,
+    ) -> Optional[str]:
+        aliases = data.get("legacy_dm_aliases") or {}
+        matches: set[str] = set()
+        for key, digest, alias_kind in self._legacy_dm_alias_candidates(source):
+            row = aliases.get(key)
+            if row is None:
+                continue
+            if not isinstance(row, dict) or (
+                row.get("platform") != "feishu"
+                or row.get("kind") != "dm"
+                or row.get("alias_kind") != alias_kind
+                or row.get("alias_digest") != digest
+            ):
+                raise ProfileProvisionRejected(
+                    "profile_registry_invalid", "legacy DM alias metadata conflicts"
+                )
+            claimed = row.get("claimed_chat_digest")
+            if claimed and claimed != chat_digest:
+                continue
+            profile = row.get("profile")
+            if not isinstance(profile, str) or not profile.strip():
+                raise ProfileProvisionRejected(
+                    "profile_registry_invalid", "legacy DM alias Profile is invalid"
+                )
+            matches.add(profile)
+        if len(matches) > 1:
+            raise ProfileProvisionRejected(
+                "profile_route_conflict", "legacy DM aliases disagree"
+            )
+        return next(iter(matches), None)
+
+    def _claim_legacy_dm_alias(
+        self,
+        data: dict[str, Any],
+        source: Any,
+        chat_digest: str,
+        kind: str,
+        profile: str,
+    ) -> None:
+        key, _resolved_digest, _resolved_kind = self.identity_for_source(source)
+        platform = str(getattr(source.platform, "value", source.platform))
+        data["bindings"][key] = {
+            "platform": platform,
+            "kind": kind,
+            "identity_digest": chat_digest,
+            "profile": profile,
+        }
+        aliases = data.get("legacy_dm_aliases") or {}
+        for alias_key, _alias_digest, _alias_kind in self._legacy_dm_alias_candidates(
+            source
+        ):
+            row = aliases.get(alias_key)
+            if isinstance(row, dict) and row.get("profile") == profile:
+                claimed = row.get("claimed_chat_digest")
+                if claimed in {None, "", chat_digest}:
+                    row["claimed_chat_digest"] = chat_digest
 
     def _validate_binding(
         self,

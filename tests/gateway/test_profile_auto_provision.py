@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,6 +45,13 @@ def _group(chat_id: str = "oc_new_group") -> SessionSource:
         chat_type="group",
         user_id="ou_group_member",
     )
+
+
+def _legacy_dm_alias_key(app_id: str, alias_kind: str, identity: str) -> tuple[str, str]:
+    digest = hashlib.sha256(
+        f"feishu\0dm-alias\0{app_id}\0{alias_kind}\0{identity}".encode()
+    ).hexdigest()
+    return f"feishu:dm-alias:{alias_kind}:sha256:{digest}", f"sha256:{digest}"
 
 
 def _assert_valid_published_profile(tmp_path: Path, profile: str) -> None:
@@ -107,6 +115,118 @@ async def test_first_contact_uses_one_profile_namespace_end_to_end(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_legacy_feishu_dm_alias_is_claimed_once_by_chat(tmp_path):
+    runner = _runner(tmp_path)
+    legacy = tmp_path / "profiles/legacy-user"
+    for dirname in ("workspace", "sessions", "skills", "memories"):
+        (legacy / dirname).mkdir(parents=True, exist_ok=True)
+    (legacy / "config.yaml").write_text("memory: {}\n", encoding="utf-8")
+    (legacy / ".env").write_text("OPENAI_API_KEY=test\n", encoding="utf-8")
+    (legacy / "SOUL.md").write_text("legacy\n", encoding="utf-8")
+
+    alias_key, alias_digest = _legacy_dm_alias_key(
+        "app-primary", "user_id", "tenant-user"
+    )
+    registry_path = tmp_path / "state/profile-identity-registry.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "hermes-profile-identity-registry/v1",
+                "bindings": {},
+                "legacy_dm_aliases": {
+                    alias_key: {
+                        "platform": "feishu",
+                        "kind": "dm",
+                        "alias_kind": "user_id",
+                        "alias_digest": alias_digest,
+                        "profile": "legacy-user",
+                        "claimed_chat_digest": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first = _dm("tenant-user")
+    first.chat_id = "oc_existing_chat"
+    first.user_id_alt = "union-user"
+    first._transport_adapter_ref = lambda: SimpleNamespace(_app_id="app-primary")
+    second_chat = _dm("tenant-user")
+    second_chat.chat_id = "oc_distinct_chat"
+    second_chat.user_id_alt = "union-user"
+    second_chat._transport_adapter_ref = first._transport_adapter_ref
+
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(first) is first
+        assert first.profile == "legacy-user"
+        assert await runner.prepare_inbound_source(second_chat) is second_chat
+
+    assert second_chat.profile != "legacy-user"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    chat_key, chat_digest, _ = __import__(
+        "gateway.profile_provisioning", fromlist=["ProfileIdentityRegistry"]
+    ).ProfileIdentityRegistry.identity_for_source(first)
+    assert registry["bindings"][chat_key]["profile"] == "legacy-user"
+    assert (
+        registry["legacy_dm_aliases"][alias_key]["claimed_chat_digest"]
+        == chat_digest
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_feishu_dm_aliases_are_scoped_by_bot_app(tmp_path):
+    runner = _runner(tmp_path)
+    aliases = {}
+    for app_id, profile in (("app-primary", "legacy-primary"), ("app-secondary", "legacy-secondary")):
+        profile_dir = tmp_path / "profiles" / profile
+        for dirname in ("workspace", "sessions", "skills", "memories"):
+            (profile_dir / dirname).mkdir(parents=True, exist_ok=True)
+        (profile_dir / "config.yaml").write_text("memory: {}\n", encoding="utf-8")
+        (profile_dir / ".env").write_text("OPENAI_API_KEY=test\n", encoding="utf-8")
+        (profile_dir / "SOUL.md").write_text(profile + "\n", encoding="utf-8")
+        key, digest = _legacy_dm_alias_key(app_id, "user_id", "same-tenant-user")
+        aliases[key] = {
+            "platform": "feishu",
+            "kind": "dm",
+            "alias_kind": "user_id",
+            "alias_digest": digest,
+            "profile": profile,
+            "claimed_chat_digest": None,
+        }
+    registry_path = tmp_path / "state/profile-identity-registry.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "hermes-profile-identity-registry/v1",
+                "bindings": {},
+                "legacy_dm_aliases": aliases,
+            }
+        ),
+        encoding="utf-8",
+    )
+    primary = _dm("same-tenant-user")
+    primary.chat_id = "oc_primary_chat"
+    primary._transport_adapter_ref = lambda: SimpleNamespace(_app_id="app-primary")
+    secondary = _dm("same-tenant-user")
+    secondary.chat_id = "oc_secondary_chat"
+    secondary._transport_adapter_ref = lambda: SimpleNamespace(_app_id="app-secondary")
+    with patch(
+        "hermes_cli.profiles._get_default_hermes_home",
+        return_value=tmp_path,
+    ):
+        assert await runner.prepare_inbound_source(primary) is primary
+        assert await runner.prepare_inbound_source(secondary) is secondary
+    assert primary.profile == "legacy-primary"
+    assert secondary.profile == "legacy-secondary"
+
+
+@pytest.mark.asyncio
 async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path):
     import yaml
 
@@ -121,6 +241,7 @@ async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path)
     )
     (tmp_path / ".env").write_text(
         "OPENAI_API_KEY=provider-secret\n"
+        "ZHIPU_API_KEY=zhipu-secret\n"
         "FEISHU_APP_ID=transport-id\n"
         "FEISHU_APP_SECRET=transport-secret\n",
         encoding="utf-8",
@@ -138,7 +259,7 @@ async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path)
 
     profile = tmp_path / "profiles" / source.profile
     env_text = (profile / ".env").read_text(encoding="utf-8")
-    assert env_text == "OPENAI_API_KEY=provider-secret\n"
+    assert env_text == "OPENAI_API_KEY=provider-secret\nZHIPU_API_KEY=zhipu-secret\n"
     assert "FEISHU" not in env_text
     config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
     assert "gateway" not in config

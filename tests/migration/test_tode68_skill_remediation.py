@@ -148,6 +148,11 @@ def test_remediation_materializes_skills_credentials_tools_and_approval_policy(t
     config = yaml.safe_load((profile / "config.yaml").read_text())
     assert config["timezone"] == "Asia/Shanghai"
     assert config["approvals"]["destructive_slash_confirm"] is False
+    assert set(config["mcp_servers"]) == {
+        "zhipu-web-search",
+        "zhipu-web-reader",
+        "zhipu-zread",
+    }
     assert "enabled" not in config["platforms"]["feishu"]
     assert config["display"]["show_commentary"] is False
     assert config["display"]["memory_notifications"] == "off"

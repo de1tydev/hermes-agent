@@ -65,6 +65,20 @@ QUIET_FEISHU_DISPLAY = {
     "busy_steer_ack_enabled": False,
     "live_status": "off",
 }
+ZHIPU_MCP_SERVERS = {
+    "zhipu-web-search": {
+        "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
+        "headers": {"Authorization": "Bearer ${ZHIPU_API_KEY}"},
+    },
+    "zhipu-web-reader": {
+        "url": "https://open.bigmodel.cn/api/mcp/web_reader/mcp",
+        "headers": {"Authorization": "Bearer ${ZHIPU_API_KEY}"},
+    },
+    "zhipu-zread": {
+        "url": "https://open.bigmodel.cn/api/mcp/zread/mcp",
+        "headers": {"Authorization": "Bearer ${ZHIPU_API_KEY}"},
+    },
+}
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -190,6 +204,7 @@ def update_config(path: Path, *, profile: bool = False) -> None:
     display.setdefault("platforms", {}).setdefault("feishu", {}).update(
         QUIET_FEISHU_DISPLAY
     )
+    data.setdefault("mcp_servers", {}).update(ZHIPU_MCP_SERVERS)
     if profile:
         feishu = (data.get("platforms") or {}).get("feishu")
         if isinstance(feishu, dict) and feishu.get("home_channel"):
