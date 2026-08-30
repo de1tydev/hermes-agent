@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 import re
 import os
+import shutil
 import stat
+import subprocess
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -79,6 +83,46 @@ def test_api_skills_declare_profile_scoped_environment_variables():
         text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
         assert "required_environment_variables:" in text
         assert f"name: {variable}" in text
+
+
+def test_ai_usage_report_default_path_has_no_required_environment_gate(tmp_path):
+    skill = SKILLS / "ai-usage-report"
+    text = (skill / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter = yaml.safe_load(text.split("---", 2)[1])
+    assert "required_environment_variables" not in frontmatter
+
+    script = tmp_path / "collect_ai_usage_insights.py"
+    shutil.copy2(skill / "scripts/collect_ai_usage_insights.py", script)
+    spec = importlib.util.spec_from_file_location("collect_ai_usage_insights", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        args = Namespace(endpoint_url=None, endpoint_env_var="AI_USAGE_ENDPOINT_URL")
+        assert module.resolve_endpoint(args, environ={}) == module.DEFAULT_ENDPOINT_URL
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
+def test_baidu_search_script_runs_without_site_packages():
+    script = SKILLS / "baidu-search/scripts/search.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(script),
+            '{"query":"stdlib canary","count":1}',
+        ],
+        capture_output=True,
+        text=True,
+        env={},
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "BAIDU_API_KEY must be set" in result.stdout
+    assert "ModuleNotFoundError" not in result.stderr
 
 
 def test_remediation_materializes_skills_credentials_tools_and_approval_policy(tmp_path):

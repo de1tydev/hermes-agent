@@ -98,6 +98,8 @@ def test_plan_maps_profiles_adapts_prompts_and_quarantines_internal_jobs(tmp_pat
     assert digest["profile"] == "feishu-group-test"
     assert "minimax__web_search" not in digest["job"]["prompt"]
     assert digest["job"]["deliver"] == "feishu"
+    assert digest["job"]["provider_snapshot"] == "custom"
+    assert digest["job"]["model_snapshot"] == "deepseek-v4-flash"
     once = next(row for row in plan["imports"] if row["job"]["id"] == "oc-once")
     assert once["job"]["enabled"] is False
     assert once["job"]["next_run_at"] is None

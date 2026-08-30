@@ -21,6 +21,29 @@
 docker compose -f /opt/hermes-agent/deploy/tode68/compose.yaml up -d
 ```
 
+## Profile 内命令
+
+容器由 root 启动 s6，但 Gateway 和 Profile 运行时以 `10000:10000` 写入
+`/opt/data/profiles/<profile>`。手工运行会写 Profile 状态的命令时必须显式使用
+该 UID/GID；默认 root 身份的 `docker exec` 会留下 Scheduler 无法更新的
+`root:root` 日志、数据库、缓存或输出文件。
+
+例如手工触发 Profile 定时任务：
+
+```bash
+docker exec --user 10000:10000 \
+  -e HERMES_HOME=/opt/data/profiles/<profile> \
+  hermes-gateway-primary \
+  /opt/hermes/.venv/bin/hermes cron run <job_id>
+```
+
+执行后检查所有 Profile 的 owner 漂移；命令应无输出：
+
+```bash
+find /srv/hermes/profiles -xdev \
+  \( ! -uid 10000 -o ! -gid 10000 \) -print
+```
+
 回滚：
 
 ```bash

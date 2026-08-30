@@ -34,6 +34,9 @@ For detailed setup instructions, see:
 python3 {baseDir}/scripts/search.py '<JSON>'
 ```
 
+脚本仅使用 Python 标准库，直接调用即可；无需安装 `requests`，也不要另写搜索客户端。
+需要保存中间结果时，统一写入当前 Profile 的 `$HERMES_HOME/workspace/tmp`。
+
 ## Request Parameters
 
 | Param | Type | Required | Default | Description |

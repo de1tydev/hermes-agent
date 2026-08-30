@@ -1,8 +1,8 @@
 import sys
 import json
-import requests
 import os
 import re
+import urllib.request
 from datetime import datetime, timedelta
 
 
@@ -15,10 +15,14 @@ def baidu_search(api_key, requestBody: dict):
         "Content-Type": "application/json"
     }
 
-    # 使用POST方法发送JSON数据
-    response = requests.post(url, json=requestBody, headers=headers)
-    response.raise_for_status()
-    results = response.json()
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(requestBody).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        results = json.loads(response.read().decode("utf-8"))
     if "code" in results:
         raise Exception(results["message"])
     datas = results["references"]
@@ -39,9 +43,9 @@ if __name__ == "__main__":
     parse_data = {}
     try:
         parse_data = json.loads(query)
-        print(f"success parse request body: {parse_data}")
     except json.JSONDecodeError as e:
         print(f"JSON parse error: {e}")
+        sys.exit(1)
 
     if "query" not in parse_data:
         print("Error: query must be present in request body.")

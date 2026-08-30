@@ -253,7 +253,7 @@ def converted_job(
         "skill": skills[0] if skills else None,
         "model": None,
         "provider": None,
-        "provider_snapshot": "tode",
+        "provider_snapshot": "custom",
         "model_snapshot": "deepseek-v4-flash",
         "base_url": None,
         "script": None,

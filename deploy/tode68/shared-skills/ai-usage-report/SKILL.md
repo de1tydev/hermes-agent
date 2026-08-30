@@ -4,13 +4,6 @@ description: 生成 AI 使用量日报/排行榜。用户要求“AI 用量日�
 platforms: [linux]
 prerequisites:
   commands: [python3]
-required_environment_variables:
-  - name: AI_USAGE_ENDPOINT_URL
-    prompt: TODE AI usage endpoint override
-    required_for: non-default endpoint
-  - name: AI_USAGE_API_TOKEN
-    prompt: TODE AI usage API token
-    required_for: authenticated endpoint
 ---
 
 # AI 使用量日报 Skill
