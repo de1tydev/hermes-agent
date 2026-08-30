@@ -199,8 +199,8 @@ def main() -> int:
     for row in manifest["profiles"]:
         by_agent.setdefault(row["source_agent"], []).append(row["profile"])
         profile = target / "profiles" / row["profile"]
-        assert len((profile / "memories/MEMORY.md").read_text()) <= 20_000
-        assert len((profile / "memories/USER.md").read_text()) <= 4_000
+        assert len((profile / "memories/MEMORY.md").read_text()) <= 4_000
+        assert len((profile / "memories/USER.md").read_text()) <= 1_200
         assert "FEISHU_" not in (profile / ".env").read_text()
         config_text = (profile / "config.yaml").read_text().casefold()
         assert not any(

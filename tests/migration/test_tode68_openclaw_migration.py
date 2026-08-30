@@ -5,7 +5,13 @@ from pathlib import Path
 
 import yaml
 
-from scripts.migrate_tode68_openclaw import inventory, run
+from scripts.migrate_tode68_openclaw import (
+    MEMORY_LIMIT,
+    USER_LIMIT,
+    compact_memory,
+    inventory,
+    run,
+)
 
 
 def _json(path: Path, value: object) -> None:
@@ -116,6 +122,8 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
         assert (profile / "skills/sample/SKILL.md").is_file()
         assert (profile / "skills/legacy-memory-search/scripts/search.py").is_file()
         config = yaml.safe_load((profile / "config.yaml").read_text())
+        assert config["memory"]["memory_char_limit"] == MEMORY_LIMIT == 4_000
+        assert config["memory"]["user_char_limit"] == USER_LIMIT == 1_200
         assert config["timezone"] == "Asia/Shanghai"
         assert config["approvals"]["destructive_slash_confirm"] is False
         assert set(config["mcp_servers"]) == {
@@ -149,3 +157,35 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
             assert "enabled" not in config["platforms"]["feishu"]
         else:
             assert "platforms" not in config
+
+
+def test_compact_memory_excludes_legacy_automation_artifacts(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    memory = workspace / "MEMORY.md"
+    memory.write_text(
+        "# MEMORY.md - 长期记忆\n\n"
+        "- 用户偏好严谨、直接的技术说明。\n\n"
+        "## Promoted From Short-Term Memory (2026-08-01)\n\n"
+        "- Conversation Summary: 临时会话输出。 [score=0.9 recalls=0]\n\n"
+        "# Session: 2026-08-02 09:00:00 GMT+8\n\n"
+        "- **Session ID**: transient-session\n\n"
+        "# Deep Sleep\n\n"
+        "- Promoted 0 candidate(s) into MEMORY.md.\n",
+        encoding="utf-8",
+    )
+
+    payload, provenance = compact_memory(
+        workspace,
+        [memory],
+        target_name="MEMORY.md",
+        limit=MEMORY_LIMIT,
+    )
+
+    assert "用户偏好严谨" in payload
+    assert "Promoted From Short-Term Memory" not in payload
+    assert "Conversation Summary" not in payload
+    assert "Session ID" not in payload
+    assert "Deep Sleep" not in payload
+    assert len(payload) <= MEMORY_LIMIT
+    assert provenance

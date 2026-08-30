@@ -450,7 +450,10 @@ class ProfileIdentityRegistry:
                 )
             if existing_claim is None:
                 self._atomic_write_json(claim_path, creating_claim)
-            create_profile(profile, no_alias=True)
+            # TODE-68 Profiles receive the reviewed shared skill set below.
+            # Opt out of generic bundled-skill seeding so a fresh chat does not
+            # silently grow an 80+ skill prompt index on the next update.
+            create_profile(profile, no_alias=True, no_skills=True)
             self._seed_profile_capabilities(profile_dir, source=source)
             self._atomic_write_json(claim_path, materialized_claim)
             self._atomic_write_json(marker_path, marker)

@@ -23,8 +23,8 @@ from typing import Any
 
 SCHEMA = "tode68-openclaw-hermes-migration/v1"
 REGISTRY_SCHEMA = "hermes-profile-identity-registry/v1"
-MEMORY_LIMIT = 20_000
-USER_LIMIT = 4_000
+MEMORY_LIMIT = 4_000
+USER_LIMIT = 1_200
 MAX_AUTO_DOCUMENT = 100 * 1024 * 1024
 
 DENIED_PARTS = {
@@ -117,6 +117,14 @@ SECRET_CONTENT = re.compile(
     rb"password|authorization)[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?|"
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
     rb"\b(?:sk|xox[baprs]|gh[pousr])-[A-Za-z0-9_-]{8,}"
+)
+TRANSIENT_MEMORY_CONTENT = re.compile(
+    rb"(?i)(?:"
+    rb"promoted from short-term memory|conversation summary|"
+    rb"(?:deep|rem|light) sleep|session key|session id|"
+    rb"openclaw-memory-promotion|untrusted metadata|"
+    rb"\[score=[0-9.] +recalls=|promoted \d+ candidate"
+    rb")"
 )
 
 
@@ -356,7 +364,11 @@ def text_chunks(payload: str) -> list[str]:
 
 def safe_memory_chunk(chunk: str) -> bool:
     raw = chunk.encode("utf-8", errors="ignore")
-    return len(raw) <= 8_000 and not SECRET_CONTENT.search(raw)
+    return (
+        len(raw) <= 8_000
+        and not SECRET_CONTENT.search(raw)
+        and not TRANSIENT_MEMORY_CONTENT.search(raw)
+    )
 
 
 def compact_memory(

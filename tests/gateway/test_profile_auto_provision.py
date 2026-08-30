@@ -60,6 +60,7 @@ def _assert_valid_published_profile(tmp_path: Path, profile: str) -> None:
         assert (profile_dir / dirname).is_dir()
     assert (profile_dir / ".env").is_file()
     assert (profile_dir / "SOUL.md").is_file()
+    assert (profile_dir / ".no-bundled-skills").is_file()
     assert (profile_dir / ".hermes-auto-profile.json").is_file()
     registry = json.loads(
         (tmp_path / "state" / "profile-identity-registry.json").read_text(

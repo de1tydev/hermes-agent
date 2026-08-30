@@ -368,6 +368,19 @@ def merge_profile(source: Path, target: Path) -> dict[str, Any]:
             gid=target_stat.st_gid,
         )
 
+    legacy_skill_source = source / "skills/legacy-memory-search"
+    legacy_skill_target = target / "skills/legacy-memory-search"
+    legacy_memory_search_restored = False
+    if legacy_skill_source.is_dir():
+        target_existed = legacy_skill_target.exists()
+        copied += copy_merge(
+            legacy_skill_source,
+            legacy_skill_target,
+            uid=target_stat.st_uid,
+            gid=target_stat.st_gid,
+        )
+        legacy_memory_search_restored = not target_existed
+
     source_env = parse_env(source / ".env")
     target_env = parse_env(target / ".env")
     for key, value in source_env.items():
@@ -441,7 +454,11 @@ def merge_profile(source: Path, target: Path) -> dict[str, Any]:
             gid=source_stat.st_gid,
             mode=0o600,
         )
-    return {"files_copied": copied, "cron_jobs_moved": moved_jobs}
+    return {
+        "files_copied": copied,
+        "cron_jobs_moved": moved_jobs,
+        "legacy_memory_search_restored": legacy_memory_search_restored,
+    }
 
 
 def apply_plan(plan: dict[str, Any], target: Path) -> dict[str, Any]:
