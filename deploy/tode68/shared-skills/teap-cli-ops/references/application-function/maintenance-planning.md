@@ -20,13 +20,13 @@
 先查询服务端字段、枚举与约束：
 
 ```bash
-teap -o json maintenance annual config
+teap maintenance annual config
 ```
 
 仅生成 CSV：
 
 ```bash
-teap -o json maintenance annual run "$CASE_PATH" \
+teap maintenance annual run "$CASE_PATH" \
   --operation generate --data-file ./annual-maintenance.json \
   -o ./annual-maintenance.csv
 ```
@@ -43,7 +43,7 @@ teap -o json maintenance annual run "$CASE_PATH" \
 示例：
 
 ```bash
-teap -o json maintenance annual run "$CASE_PATH" \
+teap maintenance annual run "$CASE_PATH" \
   --operation upload-insert --data-file ./annual-maintenance.json \
   --csv ./reviewed-maintenance.csv
 ```
@@ -55,13 +55,13 @@ teap -o json maintenance annual run "$CASE_PATH" \
 查询配置：
 
 ```bash
-teap -o json maintenance years config
+teap maintenance years config
 ```
 
 预览 CSV：
 
 ```bash
-teap -o json maintenance years generate "$CASE_PATH" \
+teap maintenance years generate "$CASE_PATH" \
   --gen-type coal --gen-type nuclear --a-maint-rate 20 \
   --arrange-type 2 -o ./maintenance-years.csv
 ```
@@ -69,7 +69,7 @@ teap -o json maintenance years generate "$CASE_PATH" \
 直接写入 case：
 
 ```bash
-teap -o json maintenance years insert "$CASE_PATH" \
+teap maintenance years insert "$CASE_PATH" \
   --gen-type coal --gen-type nuclear --a-maint-rate 20 \
   --arrange-type 2
 ```
@@ -78,27 +78,27 @@ teap -o json maintenance years insert "$CASE_PATH" \
 
 ## 与仿真算法的关系
 
-普通 `.tc` 任务类型 `3/4/5/6/101/102/103/105/301` 通过 `task start --job-type` 执行；`104` 短路计算使用 Core 的 BPA 专用入口，当前 CLI 尚未封装。完整输入和类型边界见 [computation-modes.md](computation-modes.md)，任务操作见 [tasks-results-logs.md](tasks-results-logs.md)。滚动模拟的爬坡率、断面限额，规划的 DSM、机组最小在线数量、光热最小技术出力、供需预检查以及风光时变成本等能力由设备表、参数和时序表达，不应为每个算法字段创建临时 CLI 命令。
+普通 `.tc` 任务类型 `3/4/5/6/101/102/103/105/301` 通过 `task start --job-type` 执行；`104` 短路计算使用 Core 的 BPA 专用入口，当前 CLI 尚未封装。完整输入和类型边界见 [general-operation/computation-modes.md](../general-operation/computation-modes.md)，任务操作见 [general-operation/task-lifecycle.md](../general-operation/task-lifecycle.md) 与 [teapresult/result-lifecycle.md](../teapresult/result-lifecycle.md)。滚动模拟的爬坡率、断面限额，规划的 DSM、机组最小在线数量、光热最小技术出力、供需预检查以及风光时变成本等能力由设备表、参数和时序表达，不应为每个算法字段创建临时 CLI 命令。
 
 相关入口：
 
-- 设备模型： [device-tables.md](device-tables.md)
-- 参数： [parameters.md](parameters.md)
-- 时序： [timeseries.md](timeseries.md)
-- 执行与结果： [tasks-results-logs.md](tasks-results-logs.md)
+- 设备模型： [teapcase/device-tables.md](../teapcase/device-tables.md)
+- 参数： [teapcase/parameters.md](../teapcase/parameters.md)
+- 时序： [teapcase/timeseries-write.md](../teapcase/timeseries-write.md)
+- 执行与结果： [general-operation/task-lifecycle.md](../general-operation/task-lifecycle.md)
 
 ## 运行方式筛选
 
 运行方式筛选是已完成短期 `.tr` 的后处理算法。先获取服务端当前支持的完整场景分类：
 
 ```bash
-teap -o json result operation-modes scenarios
+teap result operation-modes scenarios
 ```
 
 将所需场景按返回的全部分类键写入 JSON。后端要求分类键集合完整，即使某一类不选择场景也应传空数组：
 
 ```bash
-teap -o json result operation-modes run "$TASK_ID_OR_RESULT_PATH" \
+teap result operation-modes run "$TASK_ID_OR_RESULT_PATH" \
   --scenarios-file ./operation-mode-scenarios.json \
   --summary-output ./typical-scenarios.xlsx \
   --detail-output ./typical-scenarios-detail.xlsx
@@ -108,10 +108,6 @@ teap -o json result operation-modes run "$TASK_ID_OR_RESULT_PATH" \
 
 ## 校验与失败处理
 
-插入检修计划后回读受影响的机组/计划表，并运行：
-
-```bash
-teap -o json case validate "$CASE_PATH"
-```
+插入检修计划后回读受影响的机组/计划表；完成同一建模批次后，按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 在启动任务前执行一次提交门禁。
 
 生成成功但插入失败时，不要把生成命令当作已修改 case。读取错误 `hints` 和 config，修正明确字段后再执行；同一 case 的算法写操作必须串行。

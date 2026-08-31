@@ -5,8 +5,8 @@
 `timeseries.type` 是 Core 的业务键，不是前端显示名称，也不是任意文本。新建或修改曲线前必须先查询当前 case 的服务端配置：
 
 ```bash
-teap -o json timeseries types "$CASE_PATH" --sheet wind
-teap -o json timeseries types "$CASE_PATH" --sheet load
+teap timeseries types "$CASE_PATH" --sheet wind
+teap timeseries types "$CASE_PATH" --sheet load
 ```
 
 只使用返回的 `sheets[].types[].value`。命令会同时为每个类型返回 `recommended_value_type`。新模型使用 `<设备表>.<类型键>` 限定形式，例如：
@@ -51,7 +51,7 @@ teap -o json timeseries types "$CASE_PATH" --sheet load
 
 ## 当前 develop 完整类型快照
 
-下表来自 TEAP Core `origin/develop` 的 `teap/config/tc_structure.yml`，commit `367095ff8ef2d1111ae900c61a015ae651393710`。它合并两类来源：设备属性的 `change_with_timeseries: true` 与表级 `extra_ts_type`。运行服务可能更新，因此命令返回值始终优先于此快照。
+下表来自 TEAP Core `origin/develop` 的 `teap/config/tc_structure.yml`，commit `7025ae0fb761ef05ba6c51fe852c091fd62bf1f6`。它合并两类来源：设备属性的 `change_with_timeseries: true` 与表级 `extra_ts_type`。运行服务可能更新，因此命令返回值始终优先于此快照。
 
 | 设备表 | 标准 `type` |
 | --- | --- |
@@ -74,7 +74,7 @@ teap -o json timeseries types "$CASE_PATH" --sheet load
 | `stogen` | `stogen.discharge_charge_state`, `stogen.discharge_power_pu`, `stogen.charge_power_pu`, `stogen.maintenance`, `stogen.max_p_discharge_mw`, `stogen.min_p_discharge_mw`, `stogen.max_p_charge_mw`, `stogen.min_p_charge_mw`, `stogen.in_service`, `stogen.charge_cost_cny_per_mwh`, `stogen.discharge_cost_cny_per_mwh` |
 | `storage` | `storage.max_e_mwh`, `storage.standing_loss_rate`, `storage.min_e_mwh` |
 | `hydrogen_tank` | `hydrogen_tank.discharge_charge_state`, `hydrogen_tank.discharge_power_pu`, `hydrogen_tank.charge_power_pu`, `hydrogen_tank.maintenance`, `hydrogen_tank.external_hydrogen_load_kg`, `hydrogen_tank.max_p_discharge_mw`, `hydrogen_tank.min_p_discharge_mw`, `hydrogen_tank.max_p_charge_mw`, `hydrogen_tank.min_p_charge_mw`, `hydrogen_tank.in_service`, `hydrogen_tank.charge_cost_cny_per_mwh`, `hydrogen_tank.discharge_cost_cny_per_mwh`, `hydrogen_tank.max_e_mwh`, `hydrogen_tank.standing_loss_rate`, `hydrogen_tank.min_e_mwh` |
-| `csp` | `csp.dni_pu`, `csp.p_rate`, `csp.maintenance`, `csp.gen_on_off`, `csp.max_p_mw`, `csp.max_p_rate`, `csp.min_p_rate`, `csp.in_service`, `csp.charge_cost_cny_per_mwh`, `csp.discharge_cost_cny_per_mwh`, `csp.charge_efficiency`, `csp.discharge_efficiency`, `csp.max_e_mwh`, `csp.min_e_mwh`, `csp.standing_loss_rate`, `csp.max_p_charge_resistive_mw`, `csp.resistive_charge_cost_cny_per_mwh`, `csp.charge_resistive_efficiency` |
+| `csp` | `csp.dni_pu`, `csp.p_rate`, `csp.maintenance`, `csp.gen_on_off`, `csp.max_p_mw`, `csp.max_p_rate`, `csp.min_p_rate`, `csp.in_service`, `csp.on_off_cost_cny`, `csp.charge_cost_cny_per_mwh`, `csp.discharge_cost_cny_per_mwh`, `csp.charge_efficiency`, `csp.discharge_efficiency`, `csp.max_e_mwh`, `csp.min_e_mwh`, `csp.standing_loss_rate`, `csp.max_p_charge_resistive_mw`, `csp.resistive_charge_cost_cny_per_mwh`, `csp.charge_resistive_efficiency`, `csp.max_p_charge_gas_mw`, `csp.gas_charge_cost_cny_per_mwh` |
 | `gen_plan` | `gen_plan.gen_on_off`, `gen_plan.gen_p_daily_accum`, `gen_plan.p_rate`, `gen_plan.maintenance`, `gen_plan.num_min_online`, `gen_plan.in_service`, `gen_plan.max_p_mw`, `gen_plan.max_p_rate`, `gen_plan.min_p_rate`, `gen_plan.power_consumption_rate`, `gen_plan.ramp_rate_per_hour`, `gen_plan.on_off_cost_cny`, `gen_plan.p0_cost_cny_per_mwh`, `gen_plan.p1_cost_cny_per_mwh`, `gen_plan.p1_pg_start_rate`, `gen_plan.p1_pg_end_rate`, `gen_plan.p2_cost_cny_per_mwh`, `gen_plan.p2_pg_end_rate`, `gen_plan.p3_cost_cny_per_mwh`, `gen_plan.p3_pg_end_rate`, `gen_plan.p4_cost_cny_per_mwh`, `gen_plan.p4_pg_end_rate`, `gen_plan.p5_cost_cny_per_mwh`, `gen_plan.p5_pg_end_rate` |
 | `hydro_acc_plan` | `hydro_acc_plan.gen_on_off`, `hydro_acc_plan.gen_p_daily_accum`, `hydro_acc_plan.p_rate`, `hydro_acc_plan.maintenance`, `hydro_acc_plan.num_min_online`, `hydro_acc_plan.in_service`, `hydro_acc_plan.max_p_mw`, `hydro_acc_plan.max_p_rate`, `hydro_acc_plan.min_p_rate`, `hydro_acc_plan.power_consumption_rate`, `hydro_acc_plan.ramp_rate_per_hour`, `hydro_acc_plan.on_off_cost_cny`, `hydro_acc_plan.p0_cost_cny_per_mwh`, `hydro_acc_plan.p1_cost_cny_per_mwh`, `hydro_acc_plan.p1_pg_start_rate`, `hydro_acc_plan.p1_pg_end_rate`, `hydro_acc_plan.p2_cost_cny_per_mwh`, `hydro_acc_plan.p2_pg_end_rate`, `hydro_acc_plan.p3_cost_cny_per_mwh`, `hydro_acc_plan.p3_pg_end_rate`, `hydro_acc_plan.p4_cost_cny_per_mwh`, `hydro_acc_plan.p4_pg_end_rate`, `hydro_acc_plan.p5_cost_cny_per_mwh`, `hydro_acc_plan.p5_pg_end_rate` |
 | `wind_plan` | `wind_plan.p_rate`, `wind_plan.maintenance`, `wind_plan.max_p_mw`, `wind_plan.in_service`, `wind_plan.generation_cost` |

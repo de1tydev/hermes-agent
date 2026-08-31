@@ -46,13 +46,13 @@ teap3 的 `/backend/teap_api_v3/get_sim_task_result/` 支持两种互斥来源�
 先确认任务完成且有结果路径：
 
 ```bash
-teap -o json task status --task-record-id 4776
+teap task status --task-record-id 4776
 ```
 
 再发现该 `.tr` 实际包含的市场能力：
 
 ```bash
-teap -o json result market groups 4776
+teap result market groups 4776
 ```
 
 `groups` 返回：
@@ -67,8 +67,8 @@ teap -o json result market groups 4776
 通用 group 仍可直接读取，并接受任务 ID 或服务端 `.tr` 路径：
 
 ```bash
-teap -o json result get 4776 -g _result.result_dict.bus.lmp
-teap -o json result get /server/path/result.tr -g _result.result_dict.bus.lmp
+teap result get 4776 -g _result.result_dict.bus.lmp
+teap result get /server/path/result.tr -g _result.result_dict.bus.lmp
 ```
 
 ## 节点电价及分量
@@ -84,9 +84,9 @@ teap -o json result get /server/path/result.tr -g _result.result_dict.bus.lmp
 读取指定母线，`--bus-index` 可重复：
 
 ```bash
-teap -o json result market prices 4776 --component lmp --bus-index 0
-teap -o json result market prices 4776 --component energy --bus-index 0 --bus-index 3
-teap -o json result market prices 4776 --component congestion --bus-index 0
+teap result market prices 4776 --component lmp --bus-index 0
+teap result market prices 4776 --component energy --bus-index 0 --bus-index 3
+teap result market prices 4776 --component congestion --bus-index 0
 ```
 
 不传 `--bus-index` 会返回全部母线和全部时点，可能产生很大的 JSON。Agent 分析应先取少量明确母线，或直接导出 CSV。
@@ -110,7 +110,7 @@ lmp = lmp_energy + lmp_congestion
 | `profit` | `_result.result_dict.gen.profit_gen` | 机组毛利 |
 
 ```bash
-teap -o json result market generator-economics 4776 \
+teap result market generator-economics 4776 \
   --metric profit --generator-index 0
 ```
 
@@ -130,7 +130,7 @@ teap -o json result market generator-economics 4776 \
 不带筛选时只发现可用维度，不返回全部统计表：
 
 ```bash
-teap -o json result market price-stats 4776
+teap result market price-stats 4776
 ```
 
 服务端可能返回的价格类型包括：
@@ -144,7 +144,7 @@ teap -o json result market price-stats 4776
 读取某一价格类型和电压组：
 
 ```bash
-teap -o json result market price-stats 4776 \
+teap result market price-stats 4776 \
   --price-type LMP --voltage-group '>=500kV'
 ```
 
@@ -179,7 +179,7 @@ teap -o json result market price-stats 4776 \
 单条市场曲线通常覆盖完整时序。优先按设备 index 限定 JSON：
 
 ```bash
-teap -o json result market prices 4776 -c lmp -b 0
+teap result market prices 4776 -c lmp -b 0
 ```
 
 需要完整数据时导出：

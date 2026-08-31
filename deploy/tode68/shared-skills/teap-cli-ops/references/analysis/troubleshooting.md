@@ -46,7 +46,12 @@ Agent 必须先读取 `retryable`，再决定是否重试。`hints` 是下一步
 | `confirmation_required` | 否 | 先只读核对目标；只有用户明确授权破坏性操作时才按 hint 添加 `--confirm` |
 | `task_not_cancellable` | 否 | 只选择等待中/计算中任务；停止中只监控，完成后转 result |
 | `task_cancel_not_applied` | 否 | 停止重试并逐个查询任务；并发状态变化可能令后端取消请求成为 no-op |
-| `case_not_found` / `invalid_case_path` | 否 | `case list` 获取同一服务返回的精确 `.tc/.tg` path |
+| `case_not_found` / `invalid_case_path` | 否 | `case list --filter <exact-name>` 获取同一服务返回的精确 `.tc/.tg` path |
+| `case_list_filter_required` | 否 | 添加精确 `--filter`；仅在用户明确接受全服务扫描时使用 `--allow-unfiltered` |
+| `case_duplicate_operation_key_required` / `case_duplicate_operation_key_conflict` | 否 | 每个预期副本使用唯一稳定 key；同一副本重试必须复用原 key |
+| `case_duplicate_name_invalid` | 否 | `--name` 必填且只能是纯文件名（无路径分隔符）；`.tc` 后缀可省略 |
+| `case_duplicate_name_occupied` | 否 | 目标名已存在于服务端算例目录；按 hint `case list --filter <name>` 核对后换 `--name` 重跑，原 key 可复用 |
+| `case_duplicate_outcome_unknown` | 否 | 停止所有等价 duplicate；按 hint 只读核对 `case list --filter <name>`，不能换 key 绕过 |
 | `case_in_use` | 否 | 先取消关联 task 并等待状态稳定，再删除 case |
 | `result_not_deletable` | 否 | 只选择已完成且有 `result_path` 的 task ID |
 | `case_delete_not_applied` / `result_delete_not_applied` | 否 | 停止重试，核对所有权/权限与服务端日志 |
@@ -61,13 +66,13 @@ Agent 必须先读取 `retryable`，再决定是否重试。`hints` 是下一步
 Sheet 不存在：
 
 ```bash
-teap -o json case structure "$CASE_PATH"
+teap case structure "$CASE_PATH"
 ```
 
 Row/index 不存在：
 
 ```bash
-teap -o json case sheet get "$CASE_PATH" <sheet>
+teap case sheet get "$CASE_PATH" <sheet>
 ```
 
 参数 path 不存在：读取完整 parameter，确认任务分支和字段名。不要静默改用其他分支或旧键。
@@ -75,7 +80,7 @@ teap -o json case sheet get "$CASE_PATH" <sheet>
 Task/result 不存在：
 
 ```bash
-teap -o json task status
+teap task status
 ```
 
 结果 group 无法解析：先用 `result groups`、`parameter`、`_result.key_summaries` 复核。不要直接解析原始 `.tr`。
@@ -83,10 +88,10 @@ teap -o json task status
 任务计算失败：
 
 ```bash
-teap -o json log analyze --task-id <id>
+teap log analyze --task-id <id>
 ```
 
-根据 finding 定点读取设备、时序或参数。修正所有目标所引用的输入后，可执行 `teap -o json task start <id> [<id> ...]` 一次原地重启并保留 ID；只有明确需要独立执行记录时，才从 case/result 服务端路径创建新 task。不得把未修正的失败任务加入批次，也不得在 `task_start_not_applied` 后原样重试整批。
+根据 finding 定点读取设备、时序或参数。修正所有目标所引用的输入后，可执行 `teap task start <id> [<id> ...]` 一次原地重启并保留 ID；只有明确需要独立执行记录时，才从 case/result 服务端路径创建新 task。不得把未修正的失败任务加入批次，也不得在 `task_start_not_applied` 后原样重试整批。
 
 ## 凭据脱敏
 

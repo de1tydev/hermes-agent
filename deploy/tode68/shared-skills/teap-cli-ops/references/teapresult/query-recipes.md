@@ -13,10 +13,12 @@
 某个猜测 group 失败不等于数据不存在，也不构成下载 `.tr` 的理由。先运行：
 
 ```bash
-teap -o json result groups <task-id-or-result-path>
+teap result groups <task-id-or-result-path>
 ```
 
 返回的 `groups` 是该文件实际存储的 `_result.*` key；`work_position_groups` 只给出 inventory 证实存在、可直接查询的普通/情景系统或分区聚合 group；`curve_inventory_groups` 和 `curve_inventories` 分别展示普通 `result_dict`、场景结果或两者，`curve_units` 给出每条实际曲线由 Core 返回的精确单位、系数和类型，兼容字段 `curve_inventory_group/device_curves` 指向首个 inventory；`zones` 给出设备曲线分区查询所需的精确 bus-index。不同 job type 和算法的结果结构可能不同，不要猜 element、curve、单位、设备索引、聚合 zone 后缀或 bus-index。
+
+当前 Core 的平衡结果可能返回层级化 group，滚动短期计算是否存在分区结果取决于所选 `.tr` 的实际状态；必须以本次 inventory 的完整 group 和 zone 为准。CSP 的燃气补热、启停或成本细分曲线同样只在 `curve_inventories/curve_units` 实际返回时查询，不得硬编码曲线名、补造 zone 后缀或因缺失而转去下载 `.tr`。
 
 ## 单位发现与换算
 
@@ -25,10 +27,10 @@ Core 的 JSON 数据是未换算原值。平衡表响应在 `structure.unit` 返
 Agent 必须先动态发现再精确选择：设备曲线从 `result groups <source>` 的 `curve_units` 读取；平衡表先执行目标查询并读取 `available_units`。随后在同一条有界查询上增加 `--unit <exact-unit>`，并确认响应的 `unit.applied=true`：
 
 ```bash
-teap -o json result work-position <source> --unit 兆瓦
-teap -o json result balance-hour <source> 750 --unit 万千瓦
-teap -o json result curve <source> wind Pwind --device-index 7 --unit 万千瓦
-teap -o json result get <source> -g _result.balance_df.neps_electricity_monthly -l --unit 兆瓦时
+teap result work-position <source> --unit 兆瓦
+teap result balance-hour <source> 750 --unit 万千瓦
+teap result curve <source> wind Pwind --device-index 7 --unit 万千瓦
+teap result get <source> -g _result.balance_df.neps_electricity_monthly -l --unit 兆瓦时
 ```
 
 不要让 Agent 自行复制系数做无标注换算，也不要假定所有功率曲线都是 MW。CLI 会跳过时间/索引、布尔状态和 Core 标记为 `fixed_unit` 的字段。未指定 `--unit` 时 `unit.applied=false`，数据仍是 Core 原值；`raw-json` 保持服务端原始响应且不能与 `--unit` 合用。
@@ -38,7 +40,7 @@ teap -o json result get <source> -g _result.balance_df.neps_electricity_monthly 
 后端完成任务按结束时间升序分页，`finished_page=-1` 表示最后一页。只取最新一条：
 
 ```bash
-teap -o json task status \
+teap task status \
   --finished-only --finished-page -1 --finished-page-size 1
 ```
 
@@ -49,7 +51,7 @@ teap -o json task status \
 月度默认表：
 
 ```bash
-teap -o json result get <source> -g _result.balance_df.neps_power -l
+teap result get <source> -g _result.balance_df.neps_power -l
 ```
 
 默认表不是固定月初、月末或简单最大负荷时刻。TEAP Core 从每个月完整时序中选择一行，主排序是四位小数舍入后的 `power_balance` 升序；全系统主值相同时，再按 `p_deficiency_total` 降序、负荷及运行特征排序。业务上它代表当月最严重的电力缺口；没有缺口时代表盈余/平衡裕度最小的时刻，通常是用户最关心、风险特征最明显的时刻。
@@ -57,8 +59,8 @@ teap -o json result get <source> -g _result.balance_df.neps_power -l
 默认行不限制其他时刻查询。第一个仿真时刻和第 751 个仿真时刻分别为：
 
 ```bash
-teap -o json result balance-hour <source> 0
-teap -o json result balance-hour <source> 750
+teap result balance-hour <source> 0
+teap result balance-hour <source> 750
 ```
 
 时间参数是零基仿真索引，不一定等于自然小时编号。命令精确映射到 `_result.balance_df.neps_alltime_power.<index>`，返回该时刻各分区/系统的电力平衡表。超出范围时停止原样重试，先从结果时间轴确认长度。
@@ -68,14 +70,14 @@ teap -o json result balance-hour <source> 750
 系统级工作位置曲线：
 
 ```bash
-teap -o json result work-position <source>
-teap -o json result work-position <source> --unit 兆瓦
+teap result work-position <source>
+teap result work-position <source> --unit 兆瓦
 ```
 
 分区聚合曲线先从 `result groups <source>` 的 `work_position_groups` 取得 `_result.balance_df.zone_power.` 后的精确 zone 后缀，再运行：
 
 ```bash
-teap -o json result work-position <source> \
+teap result work-position <source> \
   --zone "华东"
 ```
 
@@ -84,8 +86,8 @@ teap -o json result work-position <source> \
 若 `work_position_groups` 返回 `_result.scenario_balance_df` 或其 `.zone_power.<zone>`，查询情景聚合曲线时增加 `--scenario`：
 
 ```bash
-teap -o json result work-position <source> --scenario
-teap -o json result work-position <source> --scenario --zone "华东"
+teap result work-position <source> --scenario
+teap result work-position <source> --scenario --zone "华东"
 ```
 
 不要仅因通用 group 列表展示某种结果就假定当前 `.tr` 支持它；当前文件可用能力以动态 `work_position_groups` 为准。
@@ -104,17 +106,17 @@ teap -o json result work-position <source> --scenario --zone "华东"
 示例：
 
 ```bash
-teap -o json result curve <source> wind Pwind
-teap -o json result curve <source> wind Pwind_curt --device-index 7
-teap -o json result curve <source> wind Pwind_curt --device-index 7 --unit 万千瓦
-teap -o json result curve <source> solar Psolar
-teap -o json result curve <source> solar Psolar_curt
+teap result curve <source> wind Pwind
+teap result curve <source> wind Pwind_curt --device-index 7
+teap result curve <source> wind Pwind_curt --device-index 7 --unit 万千瓦
+teap result curve <source> solar Psolar
+teap result curve <source> solar Psolar_curt
 ```
 
 先轻量获取某条曲线的设备名称和索引，不返回任何时序样本：
 
 ```bash
-teap -o json result curve <source> solar Psolar --metadata-only
+teap result curve <source> solar Psolar --metadata-only
 ```
 
 再用可重复的 `--device-index` 查询目标设备。索引必须来自 metadata-only 响应，不能按 case 行号或名称猜测。该选项通过 `extra_param.filtered_index_list` 在服务端裁剪矩阵，查询少量设备时不要先拉取全部设备。若 `curve_inventory_group` 是 `_result.scenario_result_dict_st`，查询对应场景曲线时增加 `--scenario`。分区设备查询使用 inventory 返回的精确 bus-index。

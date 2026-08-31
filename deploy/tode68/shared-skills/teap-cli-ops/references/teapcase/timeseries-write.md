@@ -1,4 +1,4 @@
-# 时序曲线操作
+# 时序写入与绑定
 
 ## 目录
 
@@ -7,18 +7,17 @@
 - XLSX 批量导入
 - 创建并通用绑定
 - 机组指定出力率
-- 风光 TMY
-- 风光极端曲线
-- 负荷预测
 - 更新与校验
+
+分工：本文件覆盖在 `timeseries` sheet 中写入曲线并绑定设备；TMY、负荷预测、风光极端曲线等**数据生成**见 [application-function/data-generation.md](../application-function/data-generation.md)。
 
 ## 曲线对象与同名语义
 
 `timeseries` 行通常包含 `name`、`type`、`value_type`、`scenario`、`value`。设备行通过自己的 `timeseries` ID 列表引用曲线。Core 字段名是 `value_type`；CLI 兼容输入名 `data_type` 并在写入前规范化，但两者同时出现时必须一致。
 
-用于建模和仿真的新曲线必须显式填写非空 `scenario`。地区默认、地市到负荷省份的映射、场景选择和启动前 `case_info.scenario_selected` 设置见 [modeling-guide.md](modeling-guide.md)。
+用于建模和仿真的新曲线必须显式填写非空 `scenario`。地区默认、地市到负荷省份的映射、场景选择和启动前 `case_info.scenario_selected` 设置见 [application-instructions/build-case-from-scratch.md](../application-instructions/build-case-from-scratch.md)。
 
-标准类型发现、完整清单、限定格式与 `value_type` 契约见 [timeseries-types.md](timeseries-types.md)。创建前必须运行 `timeseries types`；`case structure` 不返回这份类型清单。选择 `types[].value` 后同时检查该项的 `recommended_value_type`；不匹配允许写入，但会在普通 JSON 成功输出中返回结构化 warning。
+标准类型发现、完整清单、限定格式与 `value_type` 契约见 [teapcase/timeseries-types.md](timeseries-types.md)。创建前必须运行 `timeseries types`；`case structure` 不返回这份类型清单。选择 `types[].value` 后同时检查该项的 `recommended_value_type`；不匹配允许写入，但会在普通 JSON 成功输出中返回结构化 warning。
 
 同一个类型后缀 `p_rate` 在不同设备上含义不同：
 
@@ -39,14 +38,14 @@
 全年固定值：
 
 ```bash
-teap -o json case row create "$CASE_PATH" timeseries \
+teap case row create "$CASE_PATH" timeseries \
   -j '{"period":"year","template":"fixed","value":0.8,"type":"wind.p_rate","value_type":"multiply","scenario":"base"}'
 ```
 
 逐日 24 点重复 365 天：
 
 ```bash
-teap -o json case row create "$CASE_PATH" timeseries \
+teap case row create "$CASE_PATH" timeseries \
   -F ./daily-profile.json
 ```
 
@@ -72,8 +71,8 @@ teap -o json case row create "$CASE_PATH" timeseries \
 模板由 case 的起止时间动态生成，先下载再填写：
 
 ```bash
-teap -o json timeseries file template "$CASE_PATH" -o ./timeseries-template.xlsx
-teap -o json timeseries file inspect "$CASE_PATH" ./curves.xlsx
+teap timeseries file template "$CASE_PATH" -o ./timeseries-template.xlsx
+teap timeseries file inspect "$CASE_PATH" ./curves.xlsx
 ```
 
 `inspect` 校验文件并返回可插入记录的 index。上传缓存最长保留 24 小时，但不要把缓存键当永久文件路径保存。
@@ -81,7 +80,7 @@ teap -o json timeseries file inspect "$CASE_PATH" ./curves.xlsx
 插入选中记录，并可同时绑定一个设备 row：
 
 ```bash
-teap -o json timeseries file insert "$CASE_PATH" ./curves.xlsx \
+teap timeseries file insert "$CASE_PATH" ./curves.xlsx \
   --index 0 --index 2 --bind-sheet wind --bind-index 7
 ```
 
@@ -100,7 +99,7 @@ teap -o json timeseries file insert "$CASE_PATH" ./curves.xlsx \
 通过 `--bind-sheet` 和可重复的 `--bind-index`，在一个命令中创建曲线并绑定设备：
 
 ```bash
-teap -o json case row create "$CASE_PATH" timeseries \
+teap case row create "$CASE_PATH" timeseries \
   -j '{"period":"year","value":0.8,"type":"gen.p_rate","value_type":"multiply","scenario":"base"}' \
   --bind-sheet gen --bind-index 3 --bind-index 4
 ```
@@ -129,7 +128,7 @@ teap -o json case row create "$CASE_PATH" timeseries \
 部分时段指定示例：
 
 ```bash
-teap -o json case row create "$CASE_PATH" timeseries \
+teap case row create "$CASE_PATH" timeseries \
   -j '{"period":"day","template":"repeat","type":"gen.p_rate","value_type":"multiply","scenario":"base","value":[-1,-1,-1,-1,-1,-1,0.4,0.5,0.6,0.7,0.8,0.8,0.8,0.8,0.7,0.6,0.5,0.4,0.3,0.2,-1,-1,-1,-1]}' \
   --bind-sheet gen --bind-index 3
 ```
@@ -143,85 +142,12 @@ teap -o json case row create "$CASE_PATH" timeseries \
 
 CLI 无法只凭曲线完成这些跨表校验；任务失败时按日志提示修正设备边界或启停曲线，不要反复启动同一 case。
 
-## 风光 TMY
-
-用户未指定地区时使用 `--province 江苏省`。用户指定地市时先解析并验证所属省份，再同时传省和市；不要只传城市或猜父省。每次插入都必须指定非空 `--scenario`。
-
-先检查区域树：
-
-```bash
-teap -o json timeseries tmy config
-teap -o json timeseries tmy config --province 四川
-teap -o json timeseries tmy config --province 四川 --city 成都
-```
-
-预览曲线：
-
-```bash
-teap -o json timeseries tmy preview --type wind --province 四川 --quantile 0.5 --period D
-```
-
-生成并绑定：
-
-```bash
-teap -o json timeseries tmy insert "$CASE_PATH" \
-  --type wind --province 四川 --city 成都 --quantile 0.5 --period D \
-  --scenario base --bind-index 2
-```
-
-`--bind-index` 绑定现有 `wind/solar`，`--bind-plan-index` 绑定相应 plan 表。CLI 会严格校验省/市/区父子层级；区域错误不可通过删掉层级后盲目重试，应先读 config 返回的有效节点。
-
-## 负荷预测
-
-负荷预测使用省级区域，不支持精确到地市。用户指定地市或区县时，自动解析其所属省份并以该省作为 `--area`；例如南京市使用 `--area 江苏省`。用户未指定地区时同样使用江苏省。先运行 `areas` 验证服务端支持的完整省名。
-
-列出可用区域：
-
-```bash
-teap -o json timeseries load-forecast areas
-```
-
-仅预测/下载：
-
-```bash
-teap -o json timeseries load-forecast predict --area 江苏省 --pred-year 2030
-```
-
-插入并绑定负荷：
-
-```bash
-teap -o json timeseries load-forecast insert "$CASE_PATH" \
-  --area 江苏省 --pred-year 2030 --bind-index 5 --scenario base
-```
-
-历史年份、行业电量、极值比例等专业选项以子命令 `-h` 为准。不要把地市名直接传给负荷接口，不要编造区域名；先用 `areas`。
-
-## 风光极端曲线
-
-基于 case 中已有场景生成极端风电或光伏曲线。先预览并按需下载 CSV：
-
-```bash
-teap -o json timeseries extreme preview "$CASE_PATH" \
-  --type wind --scenario base --new-scenario extreme-low \
-  --confidence-level 95 --bind-index 2 -o ./extreme.csv
-```
-
-确认后直接插入并绑定正常或规划设备：
-
-```bash
-teap -o json timeseries extreme insert "$CASE_PATH" \
-  --type solar --scenario base --new-scenario extreme-high \
-  --confidence-level 95 --bind-plan-index 3 --max-p-rate 0.9
-```
-
-`confidence-level` 范围为 0-100，`max-p-rate` 范围为 0-1，且至少提供一个 `--bind-index` 或 `--bind-plan-index`。后端要求二次确认时命令返回 `code=2`；读取消息后再决定是否加 `--confirm`，不要自动确认。
-
 ## 更新与校验
 
 更新模板曲线会先读取原始 row，再保留未修改字段：
 
 ```bash
-teap -o json case row update "$CASE_PATH" timeseries 9 \
+teap case row update "$CASE_PATH" timeseries 9 \
   -j '{"period":"year","template":"fixed","value":0.9}'
 ```
 
@@ -230,6 +156,6 @@ teap -o json case row update "$CASE_PATH" timeseries 9 \
 1. `case sheet get "$CASE_PATH" timeseries` 中的 ID、type、scenario、点数和关系摘要；
 2. 设备 sheet 的 `timeseries` ID 列表；
 3. 机组曲线同时检查 `gen_on_off` 和 `gen_p_rate_match_onoff`；
-4. 运行 `case validate`，再启动任务。
+4. 完成本批次所有 case 修改并回读场景参数后，按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 通过一次统一提交门禁，修复 errors 并确认 warnings 后再启动任务。
 
-启动前还必须把本次曲线场景写入并回读 `case_info.scenario_selected`；仅在曲线行写 `scenario` 不会自动选择运行场景。完整顺序见 [modeling-guide.md](modeling-guide.md)。
+启动前还必须把本次曲线场景写入并回读 `case_info.scenario_selected`；仅在曲线行写 `scenario` 不会自动选择运行场景。完整顺序见 [application-instructions/build-case-from-scratch.md](../application-instructions/build-case-from-scratch.md)。

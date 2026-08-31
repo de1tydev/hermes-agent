@@ -1,29 +1,49 @@
-# 建模指引
+# 从 0 新建算例
 
 ## 目录
 
-- 建模输入决策
+- 前置决策（必填项）
+- 创建算例
+- 编辑依赖顺序
 - 地区选择规则
 - 场景选择规则
 - 风光与负荷曲线生成
 - 缺失参数与字段补充
 - 启动前选择仿真场景
-- 完整示例
 - 校验与停止条件
 
-## 建模输入决策
+本教程给出从空算例到可提交任务的完整顺序与“哪些是必填”的判断。设备表/参数/时序的细节分散在对应参考中：[设备表](../teapcase/device-tables.md)、[参数](../teapcase/parameters.md)、[时序写入](../teapcase/timeseries-write.md)、[时序类型](../teapcase/timeseries-types.md)、[数据生成](../application-function/data-generation.md)、[任务启动](../general-operation/task-lifecycle.md)、[计算模式](../general-operation/computation-modes.md)。
+
+## 前置决策（必填项）
 
 开始创建设备和时序前，先从用户需求中确定：
 
-1. 建模地区：省、地级市或区县；
-2. 仿真年份和时间范围；
-3. 场景名称；
-4. 风电、光伏、负荷设备及其绑定关系；
-5. 计算模式和 `job_type`。
+1. **建模地区**：省、地级市或区县（影响风光荷曲线来源）；
+2. **仿真年份和时间范围**（影响曲线年份与月度表语义）；
+3. **场景名称**（风、光、荷曲线与 `case_info.scenario_selected` 必须一致）；
+4. **风电、光伏、负荷设备及其绑定关系**（哪些 row 绑定哪些曲线）；
+5. **计算模式和 `job_type`**（见 [计算模式](../general-operation/computation-modes.md)）。
 
-创建任何时序前必须运行 `teap -o json timeseries types "$CASE_PATH" --sheet <设备表>`，并从返回的 `types[].value` 选择限定类型。完整规则和当前 Core 清单见 [timeseries-types.md](timeseries-types.md)。不能把前端显示文字（例如“指定出力率”）写入 `timeseries.type`。
+创建任何时序前必须运行 `teap timeseries types "$CASE_PATH" --sheet <设备表>`，并从返回的 `types[].value` 选择限定类型。完整规则和当前 Core 清单见 [时序类型](../teapcase/timeseries-types.md)。不能把前端显示文字（例如“指定出力率”）写入 `timeseries.type`。
 
 地区或场景未给出时按本文的明确默认规则继续，不要生成空场景曲线。用户给出地区或场景时优先采用用户值，不得用默认值覆盖。
+
+## 创建算例
+
+```bash
+teap case create demo
+```
+
+记录返回的服务端 `path`，后续所有写操作使用该 path。常用创建选项以 `teap case create -h` 为准；不要猜模板名，使用 `case templates` 查询。新建空算例可直接使用字段模板创建设备，不必先读全部结构；只有非常见表、导入结构或服务端拒绝字段时再 `case structure`。算例生命周期细节（复制、导入、删除等）见 [算例生命周期](../teapcase/case-lifecycle.md)。
+
+## 编辑依赖顺序
+
+按依赖顺序串行编辑同一个 `.tc`：**分区 -> 母线 -> 设备 -> 时序 -> 参数**。row index 分配依赖当前文件状态，同一 `.tc` 的写操作必须串行。不要为了“确认”重复成功的写命令。
+
+- 分区与母线：见 [设备表](../teapcase/device-tables.md)；
+- 设备行：创建时目标表支持模板初始化时优先 `--fill-defaults`，记录返回 row ID 并回读；
+- 时序：先 `timeseries types` 选类型，再按 [时序写入](../teapcase/timeseries-write.md) 创建并绑定；
+- 参数：按 [参数](../teapcase/parameters.md) 读取/设置，并把运行场景写入 `case_info.scenario_selected`。
 
 ## 地区选择规则
 
@@ -41,8 +61,8 @@
 风光和负荷都使用该省。先通过服务端配置取得精确名称：
 
 ```bash
-teap -o json timeseries tmy config --province 江苏
-teap -o json timeseries load-forecast areas
+teap timeseries tmy config --province 江苏
+teap timeseries load-forecast areas
 ```
 
 TMY 命令接受省名简称并规范化，但建模记录和汇报应使用服务端返回的完整名称，例如 `江苏省`。
@@ -93,35 +113,35 @@ TMY 命令接受省名简称并规范化，但建模记录和汇报应使用服�
 先取得实际可用地区和设备 row ID：
 
 ```bash
-teap -o json timeseries tmy config --province "$PROVINCE"
-teap -o json timeseries load-forecast areas
-teap -o json case sheet get "$CASE_PATH" wind
-teap -o json case sheet get "$CASE_PATH" solar
-teap -o json case sheet get "$CASE_PATH" load
-teap -o json timeseries types "$CASE_PATH" --sheet wind
-teap -o json timeseries types "$CASE_PATH" --sheet solar
-teap -o json timeseries types "$CASE_PATH" --sheet load
+teap timeseries tmy config --province "$PROVINCE"
+teap timeseries load-forecast areas
+teap case sheet get "$CASE_PATH" wind
+teap case sheet get "$CASE_PATH" solar
+teap case sheet get "$CASE_PATH" load
+teap timeseries types "$CASE_PATH" --sheet wind
+teap timeseries types "$CASE_PATH" --sheet solar
+teap timeseries types "$CASE_PATH" --sheet load
 ```
 
 生成曲线时始终显式传场景并绑定目标设备：
 
 ```bash
-teap -o json timeseries tmy insert "$CASE_PATH" \
+teap timeseries tmy insert "$CASE_PATH" \
   --type wind --province "$PROVINCE" --city "$CITY" \
   --quantile 0.5 --period D --scenario "$SCENARIO" --bind-index "$WIND_ID"
 
-teap -o json timeseries tmy insert "$CASE_PATH" \
+teap timeseries tmy insert "$CASE_PATH" \
   --type solar --province "$PROVINCE" --city "$CITY" \
   --quantile 0.5 --period D --scenario "$SCENARIO" --bind-index "$SOLAR_ID"
 
-teap -o json timeseries load-forecast insert "$CASE_PATH" \
+teap timeseries load-forecast insert "$CASE_PATH" \
   --area "$LOAD_PROVINCE" --pred-year "$YEAR" \
   --scenario "$SCENARIO" --bind-index "$LOAD_ID"
 ```
 
 省级风光建模时省略 `--city`，不要传空变量形成含糊命令。规划风光设备使用对应的 `--bind-plan-index`。
 
-同一设备已绑定同类型、同场景曲线时，后端可能要求覆盖确认。先读取现有 `timeseries` 和设备绑定，明确替换、保留或新建场景；不要在失败后自动添加 `--confirm`。
+同一设备已绑定同类型、同场景曲线时，后端可能要求覆盖确认。先读取现有 `timeseries` 和设备绑定，明确替换、保留或新建场景；不要在失败后自动添加 `--confirm`。TMY、负荷预测、风光极端曲线的完整语义见 [数据生成](../application-function/data-generation.md)。
 
 ## 缺失参数与字段补充
 
@@ -132,44 +152,42 @@ teap -o json timeseries load-forecast insert "$CASE_PATH" \
 1. 读取失败任务和分析日志，定位精确的参数路径或 `sheet/row/field`：
 
    ```bash
-   teap -o json task status --task-record-id "$TASK_ID"
-   teap -o json log analyze --task-id "$TASK_ID"
+   teap task status --task-record-id "$TASK_ID"
+   teap log analyze --task-id "$TASK_ID"
    ```
 
 2. 判断缺失项属于设备 row 字段、参数树，还是必须由用户决定的业务输入。
 3. 新建设备且目标表支持模板初始化时，优先使用默认开启的 `--fill-defaults`。需要让修复意图清晰时显式写出该选项：
 
    ```bash
-   teap -o json case row create "$CASE_PATH" gen \
+   teap case row create "$CASE_PATH" gen \
      --name G1 --type coal --bus 0 --max_p_mw 600 --fill-defaults
    ```
 
-4. 记录返回的 row ID，确认结构化输出包含 `"autofill": true`，再回读精确 row 并校验：
+4. 记录返回的 row ID，确认结构化输出包含 `"autofill": true`，再回读精确 row；不要在批次尚未完成时单独运行完整预检：
 
    ```bash
-   teap -o json case row get "$CASE_PATH" gen "$ROW_ID"
-   teap -o json case validate "$CASE_PATH"
+   teap case row get "$CASE_PATH" gen "$ROW_ID"
    ```
 
-5. 若内置补充后仍缺字段，或目标表没有稳定的补充处理器，先运行 `case structure`，并参考同类有效行、TEAP Core 模型语义、失败日志和用户目标，仅填写能可靠确定的最小字段集合。写后回读同一 row，再运行 `case validate`。
+5. 若内置补充后仍缺字段，或目标表没有稳定的补充处理器，先运行 `case structure`，并参考同类有效行、TEAP Core 模型语义、失败日志和用户目标，仅填写能可靠确定的最小字段集合。写后回读同一 row；完成当前修复批次后，按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 统一运行提交门禁。
 
-当前内置参数补充绑定在受支持模板表的 `case row create` 流程中，不存在通用的 `case autofill` 或 `case parameter autofill` 命令。对于导入的已有不完整 row，先读取该 row 及其引用关系；不得为了触发补全而直接删除并重建，以免产生重复设备或破坏 row ID 关系。确认缺失值后使用 `case row update` 做最小修复：
+当前提供两种 Core 参数补充入口：新建设备由受支持模板的 `case row create --fill-defaults` 补充；已有算例在用户明确授权整算例修改后，可运行 `python skills/teap-cli-ops/scripts/autofill_case_parameters.py <case-path> --confirm`。后者只处理 Core 声明支持且非空的设备表，不替换已有非空值；完成后必须运行提交前预检。不得为了触发补全而删除并重建设备，以免产生重复设备或破坏 row ID 关系。单个字段仍使用 `case row update` 做最小修复：
 
 ```bash
-teap -o json case row get "$CASE_PATH" gen "$ROW_ID"
-teap -o json case structure "$CASE_PATH"
-teap -o json case row update "$CASE_PATH" gen "$ROW_ID" -j '{"min_p_rate":0.35}'
-teap -o json case row get "$CASE_PATH" gen "$ROW_ID"
-teap -o json case validate "$CASE_PATH"
+teap case row get "$CASE_PATH" gen "$ROW_ID"
+teap case structure "$CASE_PATH"
+teap case row update "$CASE_PATH" gen "$ROW_ID" -j '{"min_p_rate":0.35}'
+teap case row get "$CASE_PATH" gen "$ROW_ID"
 ```
 
 参数树缺失时，先读取目标分支，再通过 `case parameter set` 精确写入；该命令是人工 patch，不是自动补全：
 
 ```bash
-teap -o json case parameter get "$CASE_PATH" --path mid_term.simulation
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" --path mid_term.simulation
+teap case parameter set "$CASE_PATH" \
   --path mid_term.simulation.max_solving_time --value-json '3600'
-teap -o json case parameter get "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" \
   --path mid_term.simulation.max_solving_time
 ```
 
@@ -180,10 +198,10 @@ teap -o json case parameter get "$CASE_PATH" \
 `teap task start` 当前没有 `--scenario` 选项。TEAP Core 从 case 参数 `case_info.scenario_selected` 读取本次运行场景，并用它筛选设备绑定的时序。因此每次启动前都要显式设置并回读：
 
 ```bash
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path case_info.scenario_selected --value-json '"base"'
 
-teap -o json case parameter get "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" \
   --path case_info.scenario_selected
 ```
 
@@ -192,9 +210,11 @@ teap -o json case parameter get "$CASE_PATH" \
 确认回读值与曲线的 `scenario` 完全一致后再启动：
 
 ```bash
-teap -o json case validate "$CASE_PATH"
-teap -o json task start "$CASE_PATH" --job-type 4 --wait
+teap task start "$CASE_PATH" --job-type 4
+# 需要同步等待完成时添加 --wait。
 ```
+
+启动前按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 执行唯一的提交门禁。
 
 一个 case 有多个场景时，每个场景分别执行“设置 `scenario_selected` -> 回读 -> 校验 -> 启动”，并记录各自 task ID。对同一 `.tc` 串行修改；不要并发切换场景参数。
 
@@ -204,25 +224,27 @@ teap -o json task start "$CASE_PATH" --job-type 4 --wait
 
 ```bash
 # 南京属于江苏；风光保留南京市精度，负荷使用江苏省。
-teap -o json timeseries tmy config --province 江苏省 --city 南京市
-teap -o json timeseries load-forecast areas
+teap timeseries tmy config --province 江苏省 --city 南京市
+teap timeseries load-forecast areas
 
-teap -o json timeseries tmy insert "$CASE_PATH" \
+teap timeseries tmy insert "$CASE_PATH" \
   --type wind --province 江苏省 --city 南京市 \
   --scenario base --bind-index 0
-teap -o json timeseries tmy insert "$CASE_PATH" \
+teap timeseries tmy insert "$CASE_PATH" \
   --type solar --province 江苏省 --city 南京市 \
   --scenario base --bind-index 0
-teap -o json timeseries load-forecast insert "$CASE_PATH" \
+teap timeseries load-forecast insert "$CASE_PATH" \
   --area 江苏省 --pred-year 2030 --scenario base --bind-index 0
 
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path case_info.scenario_selected --value-json '"base"'
-teap -o json case parameter get "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" \
   --path case_info.scenario_selected
-teap -o json case validate "$CASE_PATH"
-teap -o json task start "$CASE_PATH" --job-type 4 --wait
+teap task start "$CASE_PATH" --job-type 4
+# 需要等待时添加 --wait。
 ```
+
+该示例中的启动前校验按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 执行，不在示例中重复展开命令。
 
 示例 row ID 仅说明命令顺序。实际操作必须使用创建设备或读取 sheet 后得到的 ID，不要照抄 `0`。
 
@@ -235,6 +257,6 @@ teap -o json task start "$CASE_PATH" --job-type 4 --wait
 3. 风、光、负荷曲线均有非空且一致的 `scenario`；
 4. 曲线 ID 已绑定到正确设备；
 5. `case_info.scenario_selected` 与目标曲线场景完全一致；
-6. `case validate` 成功。
+6. 统一提交门禁无 errors，且 warnings 已确认。
 
 区域、绑定或场景检查失败时停止启动，读取精确 sheet/parameter 修正。不要通过删除 `--scenario`、改用空场景、把地市直接传给负荷接口或换一个省份来规避错误。

@@ -24,7 +24,7 @@
 最近一次核验的 Core 提交为 `367095ff8ef2d1111ae900c61a015ae651393710`。实际操作前仍运行以下命令查看当前 CLI 同步的类型；若文档、CLI 和目标服务不一致，停止启动并报告版本差异，不要猜一个 ID：
 
 ```bash
-teap -o json task job-types
+teap task job-types
 ```
 
 区分三个概念：
@@ -67,14 +67,15 @@ Core 的 `/backend/teap_api_v3/upload_case_file/` 接受：
 通常输入服务端 `.tc`：
 
 ```bash
-teap -o json case validate "$CASE_PATH"
-teap -o json task start "$CASE_PATH" --job-type 4
+teap task start "$CASE_PATH" --job-type 4
 ```
+
+启动前按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 执行唯一的提交门禁。
 
 只有 `301` 还允许把已有服务端 `.tr` 作为输入。CLI 会根据后缀将它作为 `tr_file_name` 提交：
 
 ```bash
-teap -o json task start "$ROLLING_RESULT_PATH" --job-type 301
+teap task start "$ROLLING_RESULT_PATH" --job-type 301
 ```
 
 不要把其他 job type 与 `.tr` 组合，也不要把本地 `.tr` 未经确认地当成服务端结果路径。
@@ -108,7 +109,7 @@ Core 的 `/backend/teap_api_v3/upload_bpa_file/` 接受 `101/102/103/104`。其�
 
 用于中长期时序模拟和电力电量平衡分析。以 `.tc` 为输入，可携带 `--chronology-reduction-method partial`；Core 当前只接受 `partial` 这一显式值，未指定时由仿真入口按模式处理默认值。
 
-常见结果包括关键摘要、成本与惩罚、电量平衡、月度风险代表时刻、任意小时平衡、工作位置及设备曲线。月度默认表不是全部时序；任意小时和设备级查询见 [result-query-recipes.md](result-query-recipes.md)。
+常见结果包括关键摘要、成本与惩罚、电量平衡、月度风险代表时刻、任意小时平衡、工作位置及设备曲线。月度默认表不是全部时序；任意小时和设备级查询见 [teapresult/query-recipes.md](../teapresult/query-recipes.md)。
 
 ### `5`：源网荷储协同规划（`long_term`）
 
@@ -164,10 +165,10 @@ Core 的 `/backend/teap_api_v3/upload_bpa_file/` 接受 `101/102/103/104`。其�
 市场结果可能保留滚动结果结构，并增加节点边际电价、能量和阻塞分量，以及可选的机组经济性和价格统计。不要套用中长期摘要路径；先运行：
 
 ```bash
-teap -o json result market groups <task-id-or-result-path>
+teap result market groups <task-id-or-result-path>
 ```
 
-完整查询方法和市场结果与滚动/时序结果的差异见 [market-results.md](market-results.md)。
+完整查询方法和市场结果与滚动/时序结果的差异见 [teapresult/market-results.md](../teapresult/market-results.md)。
 
 ## 历史与内部类型
 
@@ -201,9 +202,9 @@ teap -o json result market groups <task-id-or-result-path>
 
 执行前：
 
-1. 运行 `teap -o json task job-types`，确认 CLI 类型定义；
+1. 运行 `teap task job-types`，确认 CLI 类型定义；
 2. 确认输入后缀、服务端路径和对应启动入口；
-3. 对普通 `.tc` 运行 `teap -o json case validate <case-path>`；
+3. 对普通 `.tc` 按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 在启动前执行一次提交门禁；
 4. 明确模式专属前置条件后才启动；
 5. 失败时按结构化 `error.code`、`retryable` 和 `hints` 行动，不换相近 job type 盲试；
 6. 完成后按 job type 动态发现结果，不以另一模式的固定 group 判定“没有结果”。
@@ -211,8 +212,8 @@ teap -o json result market groups <task-id-or-result-path>
 任务查询可以按类型过滤：
 
 ```bash
-teap -o json task status --finished-only --job-type 4
-teap -o json task status --unfinished-only --job-type 301
+teap task status --finished-only --job-type 4
+teap task status --unfinished-only --job-type 301
 ```
 
 筛选只影响任务列表，不改变任务类型，也不能证明输入适合该模式。

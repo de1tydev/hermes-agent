@@ -21,13 +21,13 @@
 读取全部参数：
 
 ```bash
-teap -o json case parameter get "$CASE_PATH"
+teap case parameter get "$CASE_PATH"
 ```
 
 读取 dotted path：
 
 ```bash
-teap -o json case parameter get "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" \
   --path mid_term.simulation.max_solving_time
 ```
 
@@ -38,10 +38,10 @@ teap -o json case parameter get "$CASE_PATH" \
 JSON 标量可保持布尔、数字和 null 类型：
 
 ```bash
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path mid_term.simulation.max_solving_time --value-json '3600'
 
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path mid_term.simulation.separate_zone --value-json 'true'
 ```
 
@@ -54,7 +54,7 @@ teap -o json case parameter set "$CASE_PATH" \
 同时更新多个同层字段时使用 JSON patch：
 
 ```bash
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   -j '{"mid_term":{"simulation":{"max_solving_time":3600,"mipgap":5}}}'
 ```
 
@@ -67,13 +67,13 @@ teap -o json case parameter set "$CASE_PATH" \
 TEAP Core 使用 `case_info.scenario_selected` 选择本次仿真读取的时序场景。启动前设置精确场景名并回读：
 
 ```bash
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path case_info.scenario_selected --value-json '"base"'
-teap -o json case parameter get "$CASE_PATH" \
+teap case parameter get "$CASE_PATH" \
   --path case_info.scenario_selected
 ```
 
-该值必须与设备绑定时序行的 `scenario` 完全一致。不要把空值或 `（空）` 当作新建模场景，也不要虚构 `task start --scenario`；完整地区与场景建模流程见 [modeling-guide.md](modeling-guide.md)。
+该值必须与设备绑定时序行的 `scenario` 完全一致。不要把空值或 `（空）` 当作新建模场景，也不要虚构 `task start --scenario`；完整地区与场景建模流程见 [application-instructions/build-case-from-scratch.md](../application-instructions/build-case-from-scratch.md)。
 
 ## 最新机组指定出力参数
 
@@ -90,13 +90,13 @@ simulation.gen_p_rate_match_onoff
 示例：
 
 ```bash
-teap -o json case parameter set "$CASE_PATH" \
+teap case parameter set "$CASE_PATH" \
   --path mid_term.simulation.gen_p_rate_match_onoff --value-json 'true'
 ```
 
 实际分支必须来自目标 case。旧键 `gen_p_bounds_forced_must_on` 仅由 teap3 做兼容，不要在新算例继续写旧键。
 
-机组 `p_rate` 曲线创建与绑定见 [timeseries.md](timeseries.md)。
+机组 `p_rate` 曲线创建与绑定见 [timeseries-write.md](timeseries-write.md)。
 
 ## 修改纪律
 
@@ -104,6 +104,6 @@ teap -o json case parameter set "$CASE_PATH" \
 2. 读取当前 path 和类型。
 3. 做最小 set/patch。
 4. 回读同一 path。
-5. 提交任务前运行 `case validate`。
+5. 完成本批次所有 case 修改后，按 [SKILL.md 的校验节奏](../../SKILL.md#校验节奏) 在提交任务前通过统一提交门禁，修复 errors 并确认 warnings。
 
 参数更新失败且 `retryable=false` 时，执行错误 `hints`；不要改用默认分支、旧键或全局配置掩盖错误。

@@ -14,10 +14,10 @@
 报告只能基于已完成 task/result。先确认：
 
 ```bash
-teap -o json task status --task-record-id "$TASK_ID"
+teap task status --task-record-id "$TASK_ID"
 ```
 
-任务未完成时等待或报告状态；任务失败时先按 [tasks-results-logs.md](tasks-results-logs.md) 诊断，不生成看似完整的报告。
+任务未完成时等待或报告状态；任务失败时先按 [general-operation/task-lifecycle.md](../general-operation/task-lifecycle.md) 与 [analysis/logs-and-diagnostics.md](../analysis/logs-and-diagnostics.md) 诊断，不生成看似完整的报告。
 
 用户要求“规划类仿真分析报告”“模板 A”或未指定报告方向时，使用 `template/模板A_规划类仿真分析报告_公文版.docx`。最终交付物是 `.docx`，不是图片集合。
 
