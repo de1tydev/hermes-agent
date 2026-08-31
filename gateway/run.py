@@ -24251,6 +24251,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             chat_type=getattr(source, "chat_type", None),
             reply_to_message_id=reply_to_message_id or getattr(source, "message_id", None),
         )
+        if getattr(source, "platform", None) == Platform.FEISHU:
+            chat_type = str(getattr(source, "chat_type", None) or "").lower()
+            if chat_type:
+                metadata = dict(metadata or {})
+                metadata["chat_type"] = chat_type
         if getattr(source, "platform", None) == Platform.SLACK:
             # Per-turn egress identity (R3-5, connector PR gateway-gateway#210).
             # Slack's chat.startStream requires recipient_user_id (+
@@ -25023,7 +25028,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         _adapters = getattr(self, "adapters", None) or {}
         _adapter = _adapters.get(context.source.platform)
         _async_delivery = getattr(_adapter, "supports_async_delivery", True)
-        return set_session_vars(
+        _session_cwd = os.environ.get("TERMINAL_CWD", "")
+        if getattr(getattr(self, "config", None), "multiplex_profiles", False):
+            profile_home = self._resolve_profile_home_for_source(context.source)
+            profile_config = _load_gateway_config(profile_home / "config.yaml")
+            terminal_config = profile_config.get("terminal") or {}
+            configured_cwd = str(terminal_config.get("cwd") or "").strip()
+            if configured_cwd and configured_cwd not in CWD_PLACEHOLDERS:
+                candidate = Path(os.path.expandvars(configured_cwd)).expanduser()
+                if not candidate.is_absolute():
+                    candidate = profile_home / candidate
+                if candidate.is_dir():
+                    _session_cwd = str(candidate.resolve())
+                else:
+                    logger.warning(
+                        "Profile %s terminal.cwd is unavailable (%s); "
+                        "using its workspace instead",
+                        getattr(context.source, "profile", "") or profile_home.name,
+                        candidate,
+                    )
+                    _session_cwd = str(profile_home / "workspace")
+            else:
+                _session_cwd = str(profile_home / "workspace")
+        tokens = set_session_vars(
             platform=context.source.platform.value,
             chat_id=context.source.chat_id,
             chat_type=(
@@ -25036,11 +25063,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             user_name=str(context.source.user_name) if context.source.user_name else "",
             scope_id=str(getattr(context.source, "scope_id", "") or ""),
             session_key=context.session_key,
+            session_id=context.session_id,
             message_id=str(context.source.message_id) if context.source.message_id else "",
             profile=getattr(context.source, "profile", "") or "",
+            cwd=_session_cwd,
             async_delivery=_async_delivery,
             cron_session="",
         )
+        if _session_cwd:
+            from tools.terminal_tool import record_session_cwd
+
+            record_session_cwd(context.session_id, _session_cwd)
+            record_session_cwd(context.session_key, _session_cwd)
+        return tokens
 
     def _clear_session_env(self, tokens: list) -> None:
         """Restore session context variables to their pre-handler values."""

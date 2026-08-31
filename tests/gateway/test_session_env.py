@@ -1,5 +1,6 @@
 import asyncio
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,9 @@ from gateway.session_context import (
     _VAR_MAP,
     _UNSET,
 )
+from agent.runtime_cwd import resolve_agent_cwd
+from tools.file_tools import _resolve_base_dir
+from tools.terminal_tool import clear_session_cwd, get_session_cwd
 
 
 @pytest.fixture(autouse=True)
@@ -74,6 +78,108 @@ def test_set_session_env_sets_contextvars(monkeypatch):
 
     # Clean up
     runner._clear_session_env(tokens)
+
+
+def test_multiplex_session_cwd_uses_the_source_profile(tmp_path, monkeypatch):
+    """A Profile turn must not inherit another Profile's process-global cwd."""
+    group_workspace = tmp_path / "profiles/group/workspace"
+    dm_home = tmp_path / "profiles/dm"
+    dm_workspace = dm_home / "workspace"
+    group_workspace.mkdir(parents=True)
+    dm_workspace.mkdir(parents=True)
+    (dm_home / "config.yaml").write_text(
+        f"terminal:\n  cwd: {dm_workspace}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TERMINAL_CWD", str(group_workspace))
+
+    runner = object.__new__(GatewayRunner)
+    runner.config = SimpleNamespace(multiplex_profiles=True)
+    runner.adapters = {}
+    runner._resolve_profile_home_for_source = lambda _source: dm_home
+    source = SessionSource(
+        platform=Platform.FEISHU,
+        chat_id="oc_dm",
+        chat_type="dm",
+        user_id="ou_user",
+        profile="dm",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="agent:dm:feishu:dm:oc_dm",
+        session_id="session-dm",
+    )
+
+    tokens = runner._set_session_env(context)
+    try:
+        assert resolve_agent_cwd() == dm_workspace
+        assert get_session_cwd(context.session_id) == str(dm_workspace)
+        assert get_session_cwd(context.session_key) == str(dm_workspace)
+        assert _resolve_base_dir(context.session_id) == dm_workspace
+    finally:
+        runner._clear_session_env(tokens)
+        clear_session_cwd(context.session_id)
+        clear_session_cwd(context.session_key)
+
+
+@pytest.mark.asyncio
+async def test_multiplex_session_cwds_remain_isolated_when_concurrent(
+    tmp_path, monkeypatch
+):
+    decoy = tmp_path / "profiles/group/workspace"
+    decoy.mkdir(parents=True)
+    homes = {}
+    for name in ("alice", "bob"):
+        home = tmp_path / "profiles" / name
+        workspace = home / "workspace"
+        workspace.mkdir(parents=True)
+        (home / "config.yaml").write_text(
+            f"terminal:\n  cwd: {workspace}\n",
+            encoding="utf-8",
+        )
+        homes[name] = home
+    monkeypatch.setenv("TERMINAL_CWD", str(decoy))
+
+    runner = object.__new__(GatewayRunner)
+    runner.config = SimpleNamespace(multiplex_profiles=True)
+    runner.adapters = {}
+    runner._resolve_profile_home_for_source = lambda source: homes[source.profile]
+
+    async def resolve_for(profile):
+        source = SessionSource(
+            platform=Platform.FEISHU,
+            chat_id=f"oc_{profile}",
+            chat_type="dm",
+            user_id=f"ou_{profile}",
+            profile=profile,
+        )
+        context = SessionContext(
+            source=source,
+            connected_platforms=[],
+            home_channels={},
+            session_key=f"agent:{profile}:feishu:dm:oc_{profile}",
+            session_id=f"session-{profile}",
+        )
+        tokens = runner._set_session_env(context)
+        try:
+            await asyncio.sleep(0)
+            return await runner._run_in_executor_with_context(
+                lambda: str(resolve_agent_cwd())
+            )
+        finally:
+            runner._clear_session_env(tokens)
+            clear_session_cwd(context.session_id)
+            clear_session_cwd(context.session_key)
+
+    try:
+        assert await asyncio.gather(resolve_for("alice"), resolve_for("bob")) == [
+            str(homes["alice"] / "workspace"),
+            str(homes["bob"] / "workspace"),
+        ]
+    finally:
+        runner._shutdown_executor()
 
 
 def test_clear_session_env_restores_previous_state(monkeypatch):
@@ -272,4 +378,3 @@ def test_cron_session_set_clear_and_reset_tristate(monkeypatch):
 
     reset_session_vars()
     assert get_session_env("HERMES_CRON_SESSION") == "1"
-

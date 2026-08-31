@@ -85,3 +85,34 @@ def test_landlock_blocks_cross_profile_writes(sandbox_tree):
     result = _run_sandbox(root, own, code)
     assert result.returncode != 0
     assert (other / "secret.txt").read_text(encoding="utf-8") == "secret"
+
+
+def test_landlock_allows_current_process_proc_status(sandbox_tree):
+    root, own, _, _ = sandbox_tree
+    result = _run_sandbox(
+        root,
+        own,
+        "from pathlib import Path; print('Name:' in Path('/proc/self/status').read_text())",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+
+
+@pytest.mark.parametrize("magic_link", ["root", "cwd"])
+def test_proc_self_magic_links_do_not_bypass_profile_isolation(
+    sandbox_tree,
+    magic_link,
+):
+    root, own, other, _ = sandbox_tree
+    if magic_link == "root":
+        target = "/proc/self/root" + str(other / "secret.txt")
+    else:
+        relative = os.path.relpath(other / "secret.txt", own)
+        target = f"/proc/self/cwd/{relative}"
+    result = _run_sandbox(
+        root,
+        own,
+        f"from pathlib import Path; Path({target!r}).read_text()",
+    )
+    assert result.returncode != 0
+    assert "PermissionError" in result.stderr

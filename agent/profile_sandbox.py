@@ -151,6 +151,11 @@ def apply_profile_landlock(root: Path, profile_home: Path) -> None:
             Path("/sys"),
             root / "shared-skills",
             root / "bin",
+            # Self-contained managed runtimes (including CoreCLR) inspect
+            # their own process mappings during startup.  Resolve the magic
+            # link now so the rule covers only this sandbox process, never
+            # the global /proc tree or another process.
+            Path("/proc/self"),
         ):
             _add_path_rule(libc, ruleset_fd, path, _READ_EXEC, handled)
 
