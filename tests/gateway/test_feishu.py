@@ -1371,6 +1371,90 @@ class TestAdapterBehavior(unittest.TestCase):
         self.assertEqual(captured["request"].request_body.receive_id, "oc_chat")
 
     @patch.dict(os.environ, {}, clear=True)
+    def test_group_reply_thread_opt_out_keeps_dm_replies_threaded(self):
+        from gateway.config import PlatformConfig
+        from plugins.platforms.feishu.adapter import FeishuAdapter
+
+        adapter = FeishuAdapter(
+            PlatformConfig(extra={"group_reply_in_thread": False})
+        )
+        calls = []
+
+        class _MessageAPI:
+            def reply(self, request):
+                calls.append(("reply", request))
+                return SimpleNamespace(
+                    success=lambda: True,
+                    data=SimpleNamespace(message_id="om_reply"),
+                )
+
+            def create(self, request):
+                calls.append(("create", request))
+                return SimpleNamespace(
+                    success=lambda: True,
+                    data=SimpleNamespace(message_id="om_top_level"),
+                )
+
+        adapter._client = SimpleNamespace(
+            im=SimpleNamespace(v1=SimpleNamespace(message=_MessageAPI()))
+        )
+
+        async def _direct(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with patch(
+            "plugins.platforms.feishu.adapter.asyncio.to_thread",
+            side_effect=_direct,
+        ):
+            group_result = asyncio.run(
+                adapter.send(
+                    chat_id="oc_group",
+                    content="group status",
+                    metadata={
+                        "thread_id": "omt-group-thread",
+                        "reply_to_message_id": "om_group_trigger",
+                        "chat_type": "group",
+                    },
+                )
+            )
+            dm_result = asyncio.run(
+                adapter.send(
+                    chat_id="oc_dm",
+                    content="dm status",
+                    metadata={
+                        "thread_id": "om_dm_thread",
+                        "reply_to_message_id": "om_dm_trigger",
+                        "chat_type": "dm",
+                    },
+                )
+            )
+
+        self.assertTrue(group_result.success)
+        self.assertTrue(dm_result.success)
+        self.assertEqual([kind for kind, _request in calls], ["create", "reply"])
+        self.assertTrue(calls[1][1].request_body.reply_in_thread)
+
+    def test_gateway_thread_metadata_carries_feishu_chat_type(self):
+        from gateway.config import Platform
+        from gateway.run import GatewayRunner
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        source = SimpleNamespace(
+            platform=Platform.FEISHU,
+            chat_id="oc_group",
+            thread_id="omt-thread",
+            chat_type="group",
+            message_id="om_trigger",
+        )
+
+        metadata = runner._thread_metadata_for_source(source)
+
+        self.assertEqual(
+            metadata,
+            {"thread_id": "omt-thread", "chat_type": "group"},
+        )
+
+    @patch.dict(os.environ, {}, clear=True)
     def test_reply_thread_opt_out_allows_top_level_fallback(self):
         from gateway.config import PlatformConfig
         from plugins.platforms.feishu.adapter import FeishuAdapter
@@ -2393,6 +2477,118 @@ class TestFeishuProcessInboundMessage(unittest.TestCase):
         adapter.build_source = Mock(return_value=SimpleNamespace(thread_id=None))
         adapter._dispatch_inbound_event = AsyncMock()
         return adapter
+
+    def test_profile_routed_document_is_cached_inside_profile_home(self):
+        """Multiplex ingress must not leave attachments in the root cache.
+
+        Feishu resolves the routed profile before content extraction.  Cache
+        writes performed by extraction therefore need the same context-local
+        Hermes home as the later agent turn; otherwise Profile isolation
+        correctly rejects the root ``cache/documents`` path.
+        """
+        from gateway.platforms.base import MessageType, cache_document_from_bytes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_home = Path(tmp) / "profiles" / "feishu-dm-test"
+            profile_home.mkdir(parents=True)
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}, clear=False):
+                adapter = self._build_adapter()
+                source = SimpleNamespace(thread_id=None, profile=None)
+                adapter.build_source = Mock(return_value=source)
+
+                async def prepare_source(candidate):
+                    candidate.profile = "feishu-dm-test"
+                    return candidate
+
+                adapter.set_inbound_source_preparer(prepare_source)
+
+                async def extract_message(_message):
+                    path = cache_document_from_bytes(b"profile document", "report.txt")
+                    return "", MessageType.DOCUMENT, [path], ["text/plain"], []
+
+                adapter._extract_message_content = AsyncMock(side_effect=extract_message)
+                message = SimpleNamespace(
+                    chat_id="oc_chat",
+                    thread_id=None,
+                    root_id=None,
+                    parent_id=None,
+                    upper_message_id=None,
+                )
+
+                asyncio.run(
+                    adapter._process_inbound_message(
+                        data=message,
+                        message=message,
+                        sender_id=None,
+                        chat_type="p2p",
+                        message_id="m-profile-document",
+                    )
+                )
+
+                event = adapter._dispatch_inbound_event.call_args.args[0]
+                cached_path = Path(event.media_urls[0])
+
+        self.assertTrue(cached_path.is_relative_to(profile_home))
+        self.assertEqual(cached_path.parent, profile_home / "cache" / "documents")
+
+    def test_reply_to_document_downloads_resource_inside_profile_home(self):
+        """A text reply to an older file must carry that file into the turn."""
+        from gateway.platforms.base import MessageType, cache_document_from_bytes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_home = Path(tmp) / "profiles" / "feishu-group-test"
+            profile_home.mkdir(parents=True)
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}, clear=False):
+                adapter = self._build_adapter()
+                source = SimpleNamespace(thread_id=None, profile=None)
+                adapter.build_source = Mock(return_value=source)
+
+                async def prepare_source(candidate):
+                    candidate.profile = "feishu-group-test"
+                    return candidate
+
+                adapter.set_inbound_source_preparer(prepare_source)
+                adapter._extract_message_content = AsyncMock(
+                    return_value=("debug this", MessageType.TEXT, [], [], [])
+                )
+                adapter._fetch_message_text = AsyncMock(
+                    return_value="[Attachment: case.tc]"
+                )
+                adapter._fetch_message_normalized = AsyncMock(
+                    return_value=SimpleNamespace()
+                )
+
+                async def download_reply_resources(**_kwargs):
+                    path = cache_document_from_bytes(b"reply document", "case.tc")
+                    return [path], ["application/octet-stream"]
+
+                adapter._download_feishu_message_resources = AsyncMock(
+                    side_effect=download_reply_resources
+                )
+                message = SimpleNamespace(
+                    chat_id="oc_chat",
+                    thread_id=None,
+                    root_id=None,
+                    parent_id="m-parent-file",
+                    upper_message_id=None,
+                )
+
+                asyncio.run(
+                    adapter._process_inbound_message(
+                        data=message,
+                        message=message,
+                        sender_id=None,
+                        chat_type="group",
+                        message_id="m-text-reply",
+                    )
+                )
+
+                event = adapter._dispatch_inbound_event.call_args.args[0]
+                cached_path = Path(event.media_urls[0])
+
+        self.assertEqual(event.reply_to_message_id, "m-parent-file")
+        self.assertEqual(event.reply_to_text, "[Attachment: case.tc]")
+        self.assertEqual(cached_path.parent, profile_home / "cache" / "documents")
 
 
     def test_non_command_message_with_mentions_injects_hint(self):

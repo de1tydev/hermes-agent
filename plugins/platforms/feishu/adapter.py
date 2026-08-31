@@ -132,7 +132,11 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
 )
 from gateway.status import acquire_scoped_lock, release_scoped_lock
-from hermes_constants import get_hermes_home
+from hermes_constants import (
+    get_hermes_home,
+    reset_hermes_home_override,
+    set_hermes_home_override,
+)
 from utils import atomic_json_write, env_float, env_int
 
 from agent.secret_scope import UnscopedSecretError as _UnscopedSecretError
@@ -3349,8 +3353,26 @@ class FeishuAdapter(BasePlatformAdapter):
 
         # Content extraction may write downloaded media to disk. Keep it after
         # the side-effect-free transport authorization above so an unknown,
-        # unauthorized sender cannot create files before rejection.
-        text, inbound_type, media_urls, media_types, mentions = await self._extract_message_content(message)
+        # unauthorized sender cannot create files before rejection. In a
+        # multiplexed gateway the preparer has also resolved ``source.profile``
+        # by this point, so scope cache helpers to that Profile before any bytes
+        # are written. Falling back to the process root here would strand the
+        # attachment outside the Profile's Landlock read boundary.
+        _cache_home_token = None
+        profile_name = str(getattr(source, "profile", "") or "").strip()
+        if profile_name:
+            from hermes_cli.profiles import get_profile_dir
+
+            _cache_home_token = set_hermes_home_override(
+                get_profile_dir(profile_name)
+            )
+        try:
+            text, inbound_type, media_urls, media_types, mentions = (
+                await self._extract_message_content(message)
+            )
+        finally:
+            if _cache_home_token is not None:
+                reset_hermes_home_override(_cache_home_token)
 
         if inbound_type == MessageType.TEXT:
             text = _strip_edge_self_mentions(text, mentions)
@@ -3374,7 +3396,38 @@ class FeishuAdapter(BasePlatformAdapter):
             or getattr(message, "root_id", None)
             or None
         )
-        reply_to_text = await self._fetch_message_text(reply_to_message_id) if reply_to_message_id else None
+        reply_to_text = None
+        if reply_to_message_id:
+            reply_to_text = await self._fetch_message_text(reply_to_message_id)
+            # A text reply to an older file/image arrives with ``media=0`` on
+            # the new message. The textual reply context preserves only an
+            # ``[Attachment: ...]`` placeholder, which is not enough for tools
+            # to inspect the resource. Refetch the replied message and stage
+            # its resources into the already-routed Profile cache, then carry
+            # those local paths on the current event.
+            reply_normalized = await self._fetch_message_normalized(
+                reply_to_message_id
+            )
+            if reply_normalized is not None:
+                _reply_cache_home_token = None
+                if profile_name:
+                    from hermes_cli.profiles import get_profile_dir
+
+                    _reply_cache_home_token = set_hermes_home_override(
+                        get_profile_dir(profile_name)
+                    )
+                try:
+                    reply_media_urls, reply_media_types = (
+                        await self._download_feishu_message_resources(
+                            message_id=reply_to_message_id,
+                            normalized=reply_normalized,
+                        )
+                    )
+                finally:
+                    if _reply_cache_home_token is not None:
+                        reset_hermes_home_override(_reply_cache_home_token)
+                media_urls = list(media_urls) + list(reply_media_urls)
+                media_types = list(media_types) + list(reply_media_types)
 
         sender_primary = (
             getattr(sender_id, "open_id", None)
@@ -4895,7 +4948,7 @@ class FeishuAdapter(BasePlatformAdapter):
         reply_to: Optional[str],
         metadata: Optional[Dict[str, Any]],
     ) -> Any:
-        reply_threads_enabled = self._reply_threads_enabled()
+        reply_threads_enabled = self._reply_threads_enabled(metadata)
         thread_id = (metadata or {}).get("thread_id")
         effective_reply_to = reply_to
         if not effective_reply_to and thread_id and reply_threads_enabled:
@@ -4941,11 +4994,21 @@ class FeishuAdapter(BasePlatformAdapter):
             request = self._build_create_message_request(receive_id_type, body)
         return await self._run_blocking(self._client.im.v1.message.create, request)
 
-    def _reply_threads_enabled(self) -> bool:
-        return bool(self.config.extra.get("reply_in_thread", True))
+    def _reply_threads_enabled(
+        self, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        default = bool(self.config.extra.get("reply_in_thread", True))
+        if str((metadata or {}).get("chat_type") or "").lower() == "group":
+            return bool(
+                self.config.extra.get("group_reply_in_thread", default)
+            )
+        return default
 
     def _has_effective_reply_thread(self, metadata: Optional[Dict[str, Any]]) -> bool:
-        return bool((metadata or {}).get("thread_id") and self._reply_threads_enabled())
+        return bool(
+            (metadata or {}).get("thread_id")
+            and self._reply_threads_enabled(metadata)
+        )
 
     @staticmethod
     def _response_succeeded(response: Any) -> bool:
