@@ -273,7 +273,11 @@ async def test_auto_profile_inherits_provider_but_not_transport_secret(tmp_path)
         "user_id": "ou_safe_capabilities",
     }
     assert "enabled" not in config["platforms"]["feishu"]
-    assert (profile / "skills/example/SKILL.md").is_file()
+    assert config["skills"]["external_dirs"] == [str(tmp_path / "shared-skills")]
+    assert not (profile / "skills/example").exists()
+    agents = (profile / "workspace/AGENTS.md").read_text(encoding="utf-8")
+    assert "$HERMES_HOME/workspace/tmp" in agents
+    assert "不得使用 `/tmp`" in agents
 
 
 @pytest.mark.asyncio

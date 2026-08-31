@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -53,6 +52,12 @@ class ProfileIdentityRegistry:
     LOCK_RELATIVE_PATH = Path("state/profile-identity-registry.lock")
     CLAIMS_RELATIVE_PATH = Path("state/profile-provision-claims")
     MARKER_FILENAME = ".hermes-auto-profile.json"
+    _WORKSPACE_STORAGE_RULES = """## 文件写入目录
+
+- 所有持久文件只能写入当前 Profile 的 `$HERMES_HOME/workspace`。
+- 临时文件统一写入 `$HERMES_HOME/workspace/tmp`；使用前先创建该目录。
+- 不得使用 `/tmp`，不得关闭或放宽 `HERMES_WRITE_SAFE_ROOT`。
+"""
     _PROFILE_SECRET_ALLOWLIST = frozenset(
         {
             "ANTHROPIC_API_KEY",
@@ -499,6 +504,26 @@ class ProfileIdentityRegistry:
             config["terminal"] = terminal
         terminal["cwd"] = str(profile_dir / "workspace")
 
+        skills_source = self.primary_home / "shared-skills"
+        if skills_source.is_dir() and not skills_source.is_symlink():
+            skills = config.get("skills")
+            if not isinstance(skills, dict):
+                skills = {}
+                config["skills"] = skills
+            else:
+                skills = dict(skills)
+                config["skills"] = skills
+            external_dirs = skills.get("external_dirs")
+            if isinstance(external_dirs, str):
+                external_dirs = [external_dirs]
+            elif not isinstance(external_dirs, list):
+                external_dirs = []
+            shared_path = str(skills_source)
+            skills["external_dirs"] = [
+                *[str(path) for path in external_dirs if str(path) != shared_path],
+                shared_path,
+            ]
+
         platform = str(
             getattr(getattr(source, "platform", None), "value", None) or ""
         ).strip().lower()
@@ -549,20 +574,15 @@ class ProfileIdentityRegistry:
             self._atomic_write_bytes(
                 profile_dir / "SOUL.md", soul_path.read_bytes(), mode=0o600
             )
-
-        skills_source = self.primary_home / "shared-skills"
-        if not skills_source.is_dir():
-            skills_source = self.primary_home / "skills"
-        if skills_source.is_dir() and not skills_source.is_symlink():
-            if any(path.is_symlink() for path in skills_source.rglob("*")):
-                raise ProfileProvisionRejected(
-                    "profile_template_invalid", "primary skills contain a symlink"
-                )
-            shutil.copytree(
-                skills_source,
-                profile_dir / "skills",
-                dirs_exist_ok=True,
-                symlinks=False,
+        agents_path = profile_dir / "workspace" / "AGENTS.md"
+        agents = ""
+        if agents_path.is_file() and not agents_path.is_symlink():
+            agents = agents_path.read_text(encoding="utf-8")
+        if self._WORKSPACE_STORAGE_RULES not in agents:
+            payload = (agents.rstrip() + "\n\n" if agents.strip() else "# AGENTS.md\n\n")
+            payload += self._WORKSPACE_STORAGE_RULES
+            self._atomic_write_bytes(
+                agents_path, (payload.rstrip() + "\n").encode(), mode=0o600
             )
 
     def _claim_path(self, digest: str) -> Path:
