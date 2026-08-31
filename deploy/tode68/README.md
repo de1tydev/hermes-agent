@@ -1,6 +1,6 @@
 # TODE68 Hermes 多 Profile 部署
 
-该部署使用两个 Gateway 连接现网已有的两个飞书应用，共享同一套 39 条聊天身份路由与 43 个隔离 Profile。飞书 transport 凭据只存在于 `/srv/hermes/.env` 和 `/srv/hermes/gateway-secondary.env`，不会复制到 Profile。
+该部署保留两个 Gateway 容器定义和两套飞书应用凭据，共享 40 条聊天身份路由与 44 个隔离 Profile。当前生产只运行 primary；secondary 已停止，避免两个 PID namespace 争抢同一 Profile 会话租约。飞书 transport 凭据只存在于 `/srv/hermes/.env` 和 `/srv/hermes/gateway-secondary.env`，不会复制到 Profile。
 
 跨 Profile 访问使用两层强制隔离：Hermes 原生工具入口仅按飞书
 `user_id=cfgg8ef2` 识别管理员；其他用户的终端、`execute_code` 和验证子进程
@@ -8,18 +8,22 @@
 即使传入 `cross_profile=True`、拼接路径、使用符号链接或修改自己的
 `state.db`，也不能读取、写入或枚举其他 Profile。
 
+`tode68-20260831-profileiso2` 只在上一版隔离镜像上为 Landlock 增加当前沙箱进程 `/proc/self` 的只读规则，使 CoreCLR 等 self-contained managed runtime 可以读取自身映射。它不开放整个 `/proc`；`/proc/self/root`、`/proc/self/cwd` 仍不能绕过跨 Profile 边界。
+
 切换前必须确认：
 
 - `/srv/hermes/migration/external-memory-disabled.json` 的 `passed` 为 `true`；
-- `state/profile-identity-registry.json` 有 39 条 route；
-- 43 个 Profile 的 `memories/MEMORY.md`、`memories/USER.md`、workspace、Skill 和只读 legacy archive 完整；
+- `state/profile-identity-registry.json` 有 40 条 route；
+- 44 个 Profile 的 `memories/MEMORY.md`、`memories/USER.md`、workspace、Skill 和只读 legacy archive 完整；
 - `openclaw-gateway` 与两个 Hermes Gateway 不得同时连接相同飞书应用。
 
-生产启动：
+primary 生产启动：
 
 ```bash
-docker compose -f /opt/hermes-agent/deploy/tode68/compose.yaml up -d
+docker start hermes-gateway-primary
 ```
+
+secondary 通过 Compose profile 隔离，普通 `docker compose up -d` 不会启动它。只有明确恢复第二个 Gateway 时才使用 `docker compose --profile secondary up -d gateway-secondary`；恢复前仍需先解决共享 Profile 会话租约问题。
 
 ## Profile 内命令
 
@@ -69,3 +73,14 @@ docker start openclaw-gateway
 - 生成 `/srv/hermes/migration/skill-remediation-receipt.json`。
 
 旧环境没有配置 `GEMINI_API_KEY`、`DASHSCOPE_API_KEY`、`EVOLINK_API_KEY` 时，对应图片 Skill 会保留并显示缺少配置，不会伪造或复用其他 Provider 的凭据。
+
+## 外挂 personal Skill 完整性修复
+
+旧 OpenClaw 还把宿主机 `/home/liaoshiwu/.agents/skills` 挂载到容器。该目录不在 `/srv/openclaw/skills` 和 `/srv/openclaw/workspace/skills` 内，原迁移器因此漏掉 `ask-code` 和 23 个 `lark-*` Skill。
+
+- 完整迁移时通过 `migrate_tode68_openclaw.py --personal-skills-root <目录>` 显式纳入外挂 Skill；不能依赖容器 mount 被自动发现。
+- 现网补迁使用 `scripts/repair_tode68_personal_skills.py`，只安装 `deploy/tode68/personal-skills/` 中经过检查的 24 个 Skill，并同步 canonical shared root 和全部现有 Profile；同时把 `deploy/tode68/runtime-skills/officecli` 与匹配的 `officecli` 二进制同步到所有 Profile 和隔离策略允许只读执行的 `/opt/data/bin`。
+- Ask Code 的 `ASK_CODE_URL`、`ASK_CODE_API_KEY` 从旧 personal Skill 私有 `.env` 读取，只写入各 Profile 的私有 `.env`；`.env`、状态文件和备份不会进入 Skill 树。
+- Lark 用户认证继续使用当前 Profile workspace 下的 `agent-data/lark-cli/`，每次通过 `LARKSUITE_CLI_CONFIG_DIR` 显式选择；不得共享其他 Profile 的用户授权，也不得把 Gateway transport 凭据复制到 Profile。
+- 当前生产镜像不含 ICU；修复器为 Profile 写入 `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`，使 self-contained `officecli` 使用 .NET 官方支持的 invariant globalization 模式启动，无需扩大镜像或隔离白名单。
+- 修复前备份位于 `/srv/hermes/backups/personal-skill-repair-*`，回执位于 `/srv/hermes/migration/personal-skill-repair-receipt.json`。

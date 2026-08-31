@@ -1,7 +1,7 @@
 name: hermes-tode68
 
 x-hermes-gateway: &hermes-gateway
-  image: tode/hermes-agent:tode68-20260829-profileiso1
+  image: tode/hermes-agent:tode68-20260831-profileiso8
   restart: unless-stopped
   network_mode: host
   stop_grace_period: 120s
@@ -38,6 +38,7 @@ services:
 
   gateway-secondary:
     <<: *hermes-gateway
+    profiles: ["secondary"]
     container_name: hermes-gateway-secondary
     env_file:
       - /srv/hermes/gateway-secondary.env
