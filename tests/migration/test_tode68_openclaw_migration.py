@@ -159,6 +159,27 @@ def test_apply_migrates_builtin_memory_assets_and_no_transport_secret(tmp_path):
             assert "platforms" not in config
 
 
+def test_apply_includes_explicit_personal_skill_root(tmp_path):
+    source = _source(tmp_path / "source")
+    personal = tmp_path / "personal-skills"
+    (personal / "ask-code").mkdir(parents=True)
+    (personal / "ask-code/SKILL.md").write_text(
+        "---\nname: ask-code\ndescription: 查询受控私有代码库。\n---\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "hermes"
+
+    run(source, target, personal_skill_roots=(personal,))
+
+    manifest = json.loads((target / "migration/migration-manifest.json").read_text())
+    assert any(
+        row["name"] == "ask-code" and row["action"] == "activate"
+        for row in manifest["skills"]["records"]
+    )
+    for profile in (target / "profiles").iterdir():
+        assert (profile / "skills/ask-code/SKILL.md").is_file()
+
+
 def test_compact_memory_excludes_legacy_automation_artifacts(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

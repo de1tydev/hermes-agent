@@ -500,8 +500,17 @@ def copy_review_skill_tree(source: Path, target: Path) -> None:
     target.chmod(0o550)
 
 
-def classify_skills(source: Path, build: Path) -> dict[str, Any]:
+def classify_skills(
+    source: Path,
+    build: Path,
+    personal_skill_roots: tuple[Path, ...] = (),
+) -> dict[str, Any]:
     roots = [source / "skills", source / "workspace/skills"]
+    for root in personal_skill_roots:
+        resolved = root.resolve(strict=True)
+        if root.is_symlink() or not resolved.is_dir():
+            raise MigrationError(f"personal skill root must be a regular directory: {root}")
+        roots.append(resolved)
     canonical = build / "shared-skills"
     review = build / "migration/review-skills"
     canonical.mkdir(parents=True)
@@ -944,7 +953,12 @@ def validate_result(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     return {"errors": errors, "passed": not errors, "profiles": len(profiles)}
 
 
-def run(source: Path, target: Path) -> dict[str, Any]:
+def run(
+    source: Path,
+    target: Path,
+    *,
+    personal_skill_roots: tuple[Path, ...] = (),
+) -> dict[str, Any]:
     source = source.resolve(strict=True)
     if target.exists() or target.is_symlink():
         raise MigrationError(f"target already exists: {target}")
@@ -955,7 +969,7 @@ def run(source: Path, target: Path) -> dict[str, Any]:
         raise MigrationError(f"staging collision: {build}")
     build.mkdir(parents=True, mode=0o700)
     try:
-        skill_manifest = classify_skills(source, build)
+        skill_manifest = classify_skills(source, build, personal_skill_roots)
         profile_rows = [
             build_profile(record, build, build / "shared-skills", primary_secrets)
             for record in profiles
@@ -1017,6 +1031,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--target", required=True, type=Path)
+    parser.add_argument(
+        "--personal-skills-root",
+        action="append",
+        default=[],
+        type=Path,
+        help="Additional personal Skill root; repeat for multiple roots.",
+    )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     profiles, facts = inventory(args.source.resolve(strict=True))
@@ -1038,7 +1059,17 @@ def main() -> int:
             )
         )
         return 0
-    print(json.dumps(run(args.source, args.target), indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            run(
+                args.source,
+                args.target,
+                personal_skill_roots=tuple(args.personal_skills_root),
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
