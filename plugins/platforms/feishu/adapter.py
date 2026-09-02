@@ -2495,11 +2495,13 @@ class FeishuAdapter(BasePlatformAdapter):
 
             data = getattr(response, "data", None)
             raw_chat_type = str(getattr(data, "chat_type", "") or "").strip().lower()
+            raw_chat_mode = str(getattr(data, "chat_mode", "") or "").strip().lower()
             info = {
                 "chat_id": chat_id,
                 "name": str(getattr(data, "name", None) or chat_id),
-                "type": self._map_chat_type(raw_chat_type),
+                "type": self._map_chat_type(raw_chat_type, raw_chat_mode),
                 "raw_type": raw_chat_type or None,
+                "raw_mode": raw_chat_mode or None,
             }
             self._chat_info_cache[chat_id] = info
             return dict(info)
@@ -3381,13 +3383,21 @@ class FeishuAdapter(BasePlatformAdapter):
         chat_id = getattr(message, "chat_id", "") or ""
         chat_info = await self.get_chat_info(chat_id)
         sender_profile = await self._resolve_sender_profile(sender_id, is_bot=is_bot)
+        source_chat_type = self._resolve_source_chat_type(
+            chat_info=chat_info,
+            event_chat_type=chat_type,
+        )
+        thread_id = self._resolve_inbound_thread_id(
+            message=message,
+            source_chat_type=source_chat_type,
+        )
         source = self.build_source(
             chat_id=chat_id,
             chat_name=chat_info.get("name") or chat_id or "Feishu Chat",
-            chat_type=self._resolve_source_chat_type(chat_info=chat_info, event_chat_type=chat_type),
+            chat_type=source_chat_type,
             user_id=sender_profile["user_id"],
             user_name=sender_profile["user_name"],
-            thread_id=getattr(message, "thread_id", None) or getattr(message, "root_id", None) or None,
+            thread_id=thread_id,
             user_id_alt=sender_profile["user_id_alt"],
             is_bot=is_bot,
         )
@@ -3434,7 +3444,6 @@ class FeishuAdapter(BasePlatformAdapter):
             if hint:
                 text = f"{hint}\n\n{text}" if text else hint
 
-        thread_id = getattr(message, "thread_id", None) or getattr(message, "root_id", None) or None
         reply_to_message_id = (
             getattr(message, "parent_id", None)
             or getattr(message, "upper_message_id", None)
@@ -4242,7 +4251,10 @@ class FeishuAdapter(BasePlatformAdapter):
         return ""
 
     @staticmethod
-    def _map_chat_type(raw_chat_type: str) -> str:
+    def _map_chat_type(raw_chat_type: str, raw_chat_mode: str = "") -> str:
+        mode = (raw_chat_mode or "").strip().lower()
+        if "topic" in mode or "thread" in mode or "forum" in mode:
+            return "forum"
         normalized = (raw_chat_type or "").strip().lower()
         if normalized == "p2p":
             return "dm"
@@ -4260,6 +4272,30 @@ class FeishuAdapter(BasePlatformAdapter):
         if event_chat_type == "p2p":
             return "dm"
         return "group"
+
+    @staticmethod
+    def _resolve_inbound_thread_id(*, message: Any, source_chat_type: str) -> Optional[str]:
+        """Return only a real Feishu topic/thread identity for session routing.
+
+        Feishu sets ``root_id`` on an ordinary quoted reply in a normal group.
+        Treating that reply root as ``SessionSource.thread_id`` silently splits
+        one shared group conversation into a new Hermes session for every reply
+        chain.  ``parent_id``/``root_id`` still flow through
+        ``MessageEvent.reply_to_message_id`` and ``reply_to_text`` so the model
+        and outbound adapter retain the quoted-message context.
+
+        A native ``thread_id`` is authoritative.  Topic/forum chats may omit it
+        on some events, so those alone keep ``root_id`` as the compatibility
+        fallback.
+        """
+        explicit_thread_id = getattr(message, "thread_id", None)
+        if explicit_thread_id:
+            return str(explicit_thread_id)
+        if str(source_chat_type or "").strip().lower() == "forum":
+            root_id = getattr(message, "root_id", None)
+            if root_id:
+                return str(root_id)
+        return None
 
     async def _resolve_sender_profile(
         self,

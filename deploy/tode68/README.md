@@ -49,6 +49,25 @@ root `config.yaml` 的 `platforms.feishu.extra` 使用
 `http_timeout_seconds: 180` 和 `file_upload_attempts: 3`。附件上传网络超时会重新
 打开文件并有限重试；飞书返回的确定性 API 错误不会重试。
 
+## 飞书群共享会话
+
+TODE68 保持 `gateway.group_sessions_per_user: false`，同一飞书群的所有成员共享
+一条群级 Hermes session。普通群中的引用回复只携带
+`reply_to_message_id`/`reply_to_text`，用于保留引用内容和回复样式；普通回复的
+`root_id` 不得作为 session key 的 thread 段，否则同一群会被静默拆成多个
+会话。只有飞书真正的 `thread_id`，以及 TOPIC/forum 群缺少显式 thread 时的
+`root_id` fallback，才建立独立 thread session。
+
+因此普通群的共享 session key 固定为：
+
+```text
+agent:<profile>:feishu:group:<chat_id>
+```
+
+上线前用 `tests/gateway/test_feishu_session_scope.py` 重放“回复附件发起任务、顶层
+追问进展、继续引用回复”的路由模式，并确认普通回复与群顶层消息 key 相同、真实
+TOPIC/forum 仍按 thread 隔离。
+
 secondary 通过 Compose profile 隔离，普通 `docker compose up -d` 不会启动它。只有明确恢复第二个 Gateway 时才使用 `docker compose --profile secondary up -d gateway-secondary`；恢复前仍需先解决共享 Profile 会话租约问题。
 
 ## Profile 内命令

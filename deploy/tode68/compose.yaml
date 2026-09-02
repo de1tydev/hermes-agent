@@ -1,7 +1,7 @@
 name: hermes-tode68
 
 x-hermes-gateway: &hermes-gateway
-  image: tode/hermes-agent:tode68-20260902-feishu-upload1
+  image: tode/hermes-agent:tode68-20260902-feishu-shared-session1
   restart: unless-stopped
   network_mode: host
   stop_grace_period: 120s
