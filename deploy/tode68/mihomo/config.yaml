@@ -1,0 +1,43 @@
+mixed-port: 17890
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: info
+ipv6: true
+tcp-concurrent: true
+unified-delay: true
+
+proxies:
+  - name: upstream-192.168.50.12
+    type: http
+    server: 192.168.50.12
+    port: 7890
+
+rules:
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,tode.ltd,DIRECT
+  - DOMAIN-SUFFIX,feishu.cn,DIRECT
+  - DOMAIN-SUFFIX,larksuite.com,DIRECT
+  - DOMAIN-SUFFIX,github.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,githubusercontent.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,githubassets.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,ghcr.io,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,bigmodel.cn,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,baidu.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,baidubce.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,bdstatic.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,google.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,googleapis.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,gstatic.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,openai.com,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,openrouter.ai,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,huggingface.co,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,hf.co,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,pypi.org,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,pythonhosted.org,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,npmjs.org,upstream-192.168.50.12
+  - DOMAIN-SUFFIX,nodejs.org,upstream-192.168.50.12
+  - MATCH,DIRECT

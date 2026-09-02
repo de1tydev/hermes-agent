@@ -23,6 +23,25 @@ primary 生产启动：
 docker start hermes-gateway-primary
 ```
 
+## 选择性代理
+
+宿主机 Docker daemon 的代理只用于拉取镜像；不要在
+`~/.docker/config.json` 中配置 `proxies.default`，否则 Docker CLI 会把代理变量
+注入所有新容器。Hermes 只连接本机 Mihomo，Mihomo 按域名规则决定直连或转发到
+现有 `192.168.50.12:7890` 上游：
+
+```bash
+docker compose -f /opt/hermes-agent/deploy/tode68/mihomo/compose.yaml up -d
+```
+
+规则位于 `deploy/tode68/mihomo/config.yaml`：飞书、TODE 内网和私网默认直连；
+GitHub、智谱、百度、Google、OpenAI 和包仓库走上游；未列出的目标默认直连。
+Mihomo 只监听 `127.0.0.1:17890`，不启用 TUN、透明代理或 LAN 监听。
+
+root `config.yaml` 的 `platforms.feishu.extra` 使用
+`http_timeout_seconds: 180` 和 `file_upload_attempts: 3`。附件上传网络超时会重新
+打开文件并有限重试；飞书返回的确定性 API 错误不会重试。
+
 secondary 通过 Compose profile 隔离，普通 `docker compose up -d` 不会启动它。只有明确恢复第二个 Gateway 时才使用 `docker compose --profile secondary up -d gateway-secondary`；恢复前仍需先解决共享 Profile 会话租约问题。
 
 ## Profile 内命令

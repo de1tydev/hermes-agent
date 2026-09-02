@@ -1,0 +1,17 @@
+name: hermes-tode68-proxy
+
+services:
+  selective-proxy:
+    image: metacubex/mihomo@sha256:baf38d282b785d7037337676714a69e3fdd1f2d9bf748dfd25fce681a624ea74
+    container_name: hermes-selective-proxy
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+    volumes:
+      - ./config.yaml:/root/.config/mihomo/config.yaml:ro

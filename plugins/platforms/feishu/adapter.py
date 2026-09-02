@@ -223,6 +223,8 @@ _FEISHU_DOC_UPLOAD_TYPES = {
 _MAX_TEXT_INJECT_BYTES = 100 * 1024
 _FEISHU_CONNECT_ATTEMPTS = 3
 _FEISHU_SEND_ATTEMPTS = 3
+_DEFAULT_FEISHU_HTTP_TIMEOUT_SECONDS = 30.0
+_DEFAULT_FEISHU_FILE_UPLOAD_ATTEMPTS = 3
 _FEISHU_APP_LOCK_SCOPE = "feishu-app-id"
 _DEFAULT_TEXT_BATCH_DELAY_SECONDS = 0.6
 _DEFAULT_TEXT_BATCH_MAX_MESSAGES = 8
@@ -431,6 +433,8 @@ class FeishuAdapterSettings:
     webhook_host: str
     webhook_port: int
     webhook_path: str
+    http_timeout_seconds: float
+    file_upload_attempts: int
     ws_reconnect_nonce: int = 30
     ws_reconnect_interval: int = 120
     ws_ping_interval: Optional[int] = None
@@ -586,6 +590,31 @@ def _coerce_int(value: Any, default: Optional[int] = None, min_value: int = 0) -
 def _coerce_required_int(value: Any, default: int, min_value: int = 0) -> int:
     parsed = _coerce_int(value, default=default, min_value=min_value)
     return default if parsed is None else parsed
+
+
+def _coerce_required_float(
+    value: Any,
+    *,
+    default: float,
+    min_value: float,
+    max_value: float,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if min_value <= parsed <= max_value else default
+
+
+def _is_retryable_file_upload_error(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    try:
+        from requests.exceptions import ConnectionError as RequestsConnectionError
+        from requests.exceptions import Timeout as RequestsTimeout
+    except ImportError:
+        return False
+    return isinstance(exc, (RequestsConnectionError, RequestsTimeout))
 
 
 # ---------------------------------------------------------------------------
@@ -1654,6 +1683,20 @@ class FeishuAdapter(BasePlatformAdapter):
                 str(extra.get("webhook_path") or os.getenv("FEISHU_WEBHOOK_PATH", _DEFAULT_WEBHOOK_PATH)).strip()
                 or _DEFAULT_WEBHOOK_PATH
             ),
+            http_timeout_seconds=_coerce_required_float(
+                extra.get("http_timeout_seconds"),
+                default=_DEFAULT_FEISHU_HTTP_TIMEOUT_SECONDS,
+                min_value=1.0,
+                max_value=600.0,
+            ),
+            file_upload_attempts=min(
+                5,
+                _coerce_required_int(
+                    extra.get("file_upload_attempts"),
+                    default=_DEFAULT_FEISHU_FILE_UPLOAD_ATTEMPTS,
+                    min_value=1,
+                ),
+            ),
             ws_reconnect_nonce=_coerce_required_int(extra.get("ws_reconnect_nonce"), default=30, min_value=0),
             ws_reconnect_interval=_coerce_required_int(extra.get("ws_reconnect_interval"), default=120, min_value=1),
             ws_ping_interval=_coerce_int(extra.get("ws_ping_interval"), default=None, min_value=1),
@@ -1691,6 +1734,8 @@ class FeishuAdapter(BasePlatformAdapter):
         self._webhook_host = settings.webhook_host
         self._webhook_port = settings.webhook_port
         self._webhook_path = settings.webhook_path
+        self._http_timeout_seconds = settings.http_timeout_seconds
+        self._file_upload_attempts = settings.file_upload_attempts
         self._ws_reconnect_nonce = settings.ws_reconnect_nonce
         self._ws_reconnect_interval = settings.ws_reconnect_interval
         self._ws_ping_interval = settings.ws_ping_interval
@@ -4844,15 +4889,41 @@ class FeishuAdapter(BasePlatformAdapter):
             duration_ms = 0
             if upload_file_type == "opus":
                 duration_ms = self._get_audio_duration_ms(file_path)
-            with open(file_path, "rb") as file_obj:
-                body = self._build_file_upload_body(
-                    file_type=upload_file_type,
-                    file_name=display_name,
-                    file=file_obj,
-                    duration=duration_ms,
-                )
-                request = self._build_file_upload_request(body)
-                upload_response = await self._run_blocking(self._client.im.v1.file.create, request)
+            upload_response = None
+            for attempt in range(self._file_upload_attempts):
+                try:
+                    # Multipart retries must reopen the consumed file and
+                    # rebuild the SDK request from the beginning.
+                    with open(file_path, "rb") as file_obj:
+                        body = self._build_file_upload_body(
+                            file_type=upload_file_type,
+                            file_name=display_name,
+                            file=file_obj,
+                            duration=duration_ms,
+                        )
+                        request = self._build_file_upload_request(body)
+                        upload_response = await self._run_blocking(
+                            self._client.im.v1.file.create,
+                            request,
+                        )
+                    break
+                except Exception as exc:
+                    if (
+                        attempt >= self._file_upload_attempts - 1
+                        or not _is_retryable_file_upload_error(exc)
+                    ):
+                        raise
+                    wait_seconds = 2 ** attempt
+                    logger.warning(
+                        "[Feishu] File upload attempt %d/%d failed; retrying in %ds: %s",
+                        attempt + 1,
+                        self._file_upload_attempts,
+                        wait_seconds,
+                        exc,
+                    )
+                    await asyncio.sleep(wait_seconds)
+            if upload_response is None:
+                raise RuntimeError("Feishu file upload produced no response")
             file_key = self._extract_response_field(upload_response, "file_key")
             if not file_key:
                 return self._response_error_result(
@@ -5130,6 +5201,7 @@ class FeishuAdapter(BasePlatformAdapter):
             .app_secret(self._app_secret)
             .domain(domain)
             .log_level(lark.LogLevel.WARNING)
+            .timeout(self._http_timeout_seconds)
             .build()
         )
 
