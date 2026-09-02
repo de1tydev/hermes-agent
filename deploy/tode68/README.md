@@ -34,9 +34,16 @@ docker start hermes-gateway-primary
 docker compose -f /opt/hermes-agent/deploy/tode68/mihomo/compose.yaml up -d
 ```
 
-规则位于 `deploy/tode68/mihomo/config.yaml`：飞书、TODE 内网和私网默认直连；
-GitHub、智谱、百度、Google、OpenAI 和包仓库走上游；未列出的目标默认直连。
-Mihomo 只监听 `127.0.0.1:17890`，不启用 TUN、透明代理或 LAN 监听。
+规则位于 `deploy/tode68/mihomo/config.yaml`：飞书、TODE 内网和私网显式直连；
+MetaCubeX `meta-rules-dat` 的 `gfw.mrs` 黑名单命中项走上游，规则每 24 小时
+从 GitHub 更新；未命中的目标默认直连。Mihomo 只监听 `127.0.0.1:17890`，
+不启用 TUN、透明代理或 LAN 监听。
+
+宿主机使用 `systemd-resolved` 时，`/etc/resolv.conf` 必须是指向
+`/run/systemd/resolve/stub-resolv.conf` 的符号链接。不要复制该文件为普通文件；
+否则 `search .` 可能被 foreign 模式读成全局根域路由，令查询绕过网卡 DNS
+`192.168.50.1` 而落到不稳定的公网 fallback DNS。上线前确认
+`resolvectl status` 显示 `resolv.conf mode: stub`，且不存在 Global `~.`。
 
 root `config.yaml` 的 `platforms.feishu.extra` 使用
 `http_timeout_seconds: 180` 和 `file_upload_attempts: 3`。附件上传网络超时会重新

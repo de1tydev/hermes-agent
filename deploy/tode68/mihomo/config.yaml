@@ -13,6 +13,16 @@ proxies:
     server: 192.168.50.12
     port: 7890
 
+rule-providers:
+  proxy-blacklist:
+    type: http
+    behavior: domain
+    format: mrs
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/gfw.mrs
+    path: ./ruleset/proxy-blacklist.mrs
+    interval: 86400
+    proxy: upstream-192.168.50.12
+
 rules:
   - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
   - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
@@ -21,23 +31,5 @@ rules:
   - DOMAIN-SUFFIX,tode.ltd,DIRECT
   - DOMAIN-SUFFIX,feishu.cn,DIRECT
   - DOMAIN-SUFFIX,larksuite.com,DIRECT
-  - DOMAIN-SUFFIX,github.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,githubusercontent.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,githubassets.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,ghcr.io,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,bigmodel.cn,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,baidu.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,baidubce.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,bdstatic.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,google.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,googleapis.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,gstatic.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,openai.com,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,openrouter.ai,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,huggingface.co,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,hf.co,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,pypi.org,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,pythonhosted.org,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,npmjs.org,upstream-192.168.50.12
-  - DOMAIN-SUFFIX,nodejs.org,upstream-192.168.50.12
+  - RULE-SET,proxy-blacklist,upstream-192.168.50.12
   - MATCH,DIRECT
