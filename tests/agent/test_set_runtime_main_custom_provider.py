@@ -21,6 +21,23 @@ def _get_globals(mod):
 class TestSetRuntimeMainCustomProvider:
     """set_runtime_main must propagate base_url/api_key/api_mode for custom providers."""
 
+    def test_scoped_runtime_preserves_session_and_compression_scope(self):
+        """Pre-turn auxiliary calls need the same session fields as live turns."""
+        import agent.auxiliary_client as mod
+
+        with mod.scoped_runtime_main(
+            {
+                "provider": "tode",
+                "model": "vision-model",
+                "session_id": "segment-id",
+                "cache_scope": "conversation-root",
+            }
+        ) as runtime:
+            assert runtime["session_id"] == "segment-id"
+            assert runtime["cache_scope"] == "conversation-root"
+            assert mod._runtime_main_value("session_id") == "segment-id"
+            assert mod._runtime_main_value("cache_scope") == "conversation-root"
+
 
     def test_clear_resets_all_globals(self):
         """clear_runtime_main resets all five globals to empty."""

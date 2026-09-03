@@ -1,6 +1,14 @@
-from agent.auxiliary_client import _build_call_kwargs
+from types import SimpleNamespace
+
+import pytest
+
+from agent.auxiliary_client import _build_call_kwargs, scoped_runtime_main
 from agent.delegation_context import delegated_child_context
-from agent.portal_tags import reset_conversation_context, set_conversation_context
+from agent.portal_tags import (
+    get_conversation_context,
+    reset_conversation_context,
+    set_conversation_context,
+)
 from agent.transports.chat_completions import ChatCompletionsTransport
 from deploy.tode68.model_providers.tode import (
     _CONVERSATION_HEADER,
@@ -8,6 +16,10 @@ from deploy.tode68.model_providers.tode import (
     build_affinity_headers,
     tode,
 )
+from gateway.config import GatewayConfig, Platform, PlatformConfig
+from gateway.platforms.base import MessageEvent, MessageType
+from gateway.run import GatewayRunner
+from gateway.session import SessionSource
 
 
 NEWAPI_URL = "https://newapi.tode.ltd/v1"
@@ -75,6 +87,28 @@ def test_compression_segment_reuses_the_conversation_root():
     assert before == after
 
 
+def test_non_delegated_request_prefers_compression_scope_over_portal_parent():
+    token = _with_conversation("portal-parent-that-may-precede-new")
+    try:
+        with scoped_runtime_main({"cache_scope": "fresh-session-root"}):
+            actual = build_affinity_headers(
+                base_url=NEWAPI_URL,
+                session_id="fresh-session-root",
+            )
+        expected_token = _with_conversation("fresh-session-root")
+        try:
+            expected = build_affinity_headers(
+                base_url=NEWAPI_URL,
+                session_id="fresh-session-root",
+            )
+        finally:
+            reset_conversation_context(expected_token)
+    finally:
+        reset_conversation_context(token)
+
+    assert actual == expected
+
+
 def test_delegated_children_share_conversation_and_use_distinct_lanes():
     token = _with_conversation("parent-session-root")
     try:
@@ -123,3 +157,78 @@ def test_headers_are_not_sent_to_an_unrelated_endpoint():
         reset_conversation_context(token)
 
     assert headers == {}
+
+
+@pytest.mark.asyncio
+async def test_pre_turn_image_enrichment_binds_compression_stable_affinity(monkeypatch):
+    """Gateway image preprocessing must bind affinity before run_conversation."""
+    runner = object.__new__(GatewayRunner)
+    runner.config = GatewayConfig(
+        platforms={Platform.FEISHU: PlatformConfig(enabled=True, token="fake")}
+    )
+    runner.adapters = {}
+    runner._pending_native_image_paths_by_session = {}
+    runner._session_model_overrides = {}
+    runner._session_reasoning_overrides = {}
+    runner.session_store = SimpleNamespace(
+        _db=SimpleNamespace(
+            get_compression_lineage=lambda session_id: [
+                "conversation-root",
+                session_id,
+            ]
+        )
+    )
+
+    source = SessionSource(
+        platform=Platform.FEISHU,
+        chat_id="test-chat",
+        chat_type="dm",
+        user_id="test-user",
+    )
+    event = MessageEvent(
+        text="看图",
+        message_type=MessageType.PHOTO,
+        source=source,
+        media_urls=["/tmp/test.png"],
+        media_types=["image/png"],
+    )
+    monkeypatch.setattr(runner, "_decide_image_input_mode", lambda **_: "text")
+    monkeypatch.setattr(
+        runner,
+        "_resolve_session_agent_runtime",
+        lambda **_: (
+            "deepseek-v4-flash",
+            {
+                "provider": "tode",
+                "base_url": NEWAPI_URL,
+                "api_key": "test-key",
+                "api_mode": "chat_completions",
+            },
+        ),
+    )
+
+    observed = {}
+
+    async def fake_enrich(message_text, image_paths):
+        observed["conversation"] = get_conversation_context()
+        observed["headers"] = build_affinity_headers(
+            base_url=NEWAPI_URL,
+            session_id=None,
+        )
+        return f"described:{message_text}"
+
+    monkeypatch.setattr(runner, "_enrich_message_with_vision", fake_enrich)
+
+    assert get_conversation_context() is None
+    result = await runner._prepare_inbound_message_text(
+        event=event,
+        source=source,
+        history=[],
+        session_key="agent:test:feishu:dm:test-chat",
+        session_id="conversation-segment",
+    )
+
+    assert result == "described:看图"
+    assert observed["conversation"] == "conversation-root"
+    assert _CONVERSATION_HEADER in observed["headers"]
+    assert get_conversation_context() is None

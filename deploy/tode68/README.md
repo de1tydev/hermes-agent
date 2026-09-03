@@ -82,6 +82,27 @@ TODE68 镜像通过 `deploy/tode68/model_providers/tode` 为
 调用。上线前应确认 NewAPI 对目标模型启用了 `stateful_v2`，并在至少 20 个不同
 session 的并发联调中检查 bucket 分布和渠道并发上限。
 
+飞书图片在正式 Agent turn 之前还会执行一次自动 vision 预分析。该路径必须从
+当前持久 session 的 compression lineage 解析 conversation root，并在调用
+`vision_analyze` 前成对绑定、结束后恢复 conversation ContextVar；不能只绑定模型
+runtime，否则请求会退化到 NewAPI 的弱 `client_family` 亲和 bucket。
+
+TODE68 的 root 配置和全部 Profile 统一使用下面的专用多模态辅助模型：
+
+```yaml
+auxiliary:
+  vision:
+    provider: tode
+    model: deepseek-v4-flash-vision-exp
+```
+
+`providers.tode.models.deepseek-v4-flash-vision-exp` 同时声明
+`supports_vision: true`。使用
+`scripts/configure_tode68_newapi_affinity.py --root /opt/data --apply` 原子更新现有
+配置；脚本会先备份全部配置，并写出
+`migration/newapi-affinity-config-receipt.json`。root 配置是新 Profile 的复制模板，
+因此后续自动创建的飞书 Profile 会继承相同 vision 配置。
+
 上线前用 `tests/gateway/test_feishu_session_scope.py` 重放“回复附件发起任务、顶层
 追问进展、继续引用回复”的路由模式，并确认普通回复与群顶层消息 key 相同、真实
 TOPIC/forum 仍按 thread 隔离。

@@ -18637,6 +18637,30 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:
             logger.debug("Failed to restore one-turn model override", exc_info=True)
 
+    def _affinity_conversation_id_for_session(self, session_id: Optional[str]) -> str:
+        """Return the compression-stable affinity id for a gateway session."""
+        physical_id = str(session_id or "").strip()
+        if not physical_id:
+            return ""
+        try:
+            session_db = getattr(self.session_store, "_db", None)
+            get_lineage = getattr(session_db, "get_compression_lineage", None)
+            if callable(get_lineage):
+                lineage = get_lineage(physical_id)
+                if (
+                    isinstance(lineage, (list, tuple))
+                    and lineage
+                    and isinstance(lineage[0], str)
+                    and lineage[0]
+                ):
+                    return lineage[0]
+        except Exception:
+            logger.debug(
+                "vision enrichment: affinity lineage resolution failed",
+                exc_info=True,
+            )
+        return physical_id
+
     async def _prepare_inbound_message_text(
         self,
         *,
@@ -18644,6 +18668,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         source: SessionSource,
         history: List[Dict[str, Any]],
         session_key: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Optional[str]:
         """Prepare inbound event text for the agent.
 
@@ -18777,13 +18802,30 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             exc_info=True,
                         )
 
-                    from agent.auxiliary_client import scoped_runtime_main
+                    affinity_conversation_id = (
+                        self._affinity_conversation_id_for_session(session_id)
+                    )
+                    if vision_runtime is not None:
+                        vision_runtime["session_id"] = str(session_id or "")
+                        vision_runtime["cache_scope"] = affinity_conversation_id
 
-                    with scoped_runtime_main(vision_runtime):
-                        message_text = await self._enrich_message_with_vision(
-                            message_text,
-                            image_paths,
-                        )
+                    from agent.auxiliary_client import scoped_runtime_main
+                    from agent.portal_tags import (
+                        reset_conversation_context,
+                        set_conversation_context,
+                    )
+
+                    affinity_token = set_conversation_context(
+                        affinity_conversation_id or None
+                    )
+                    try:
+                        with scoped_runtime_main(vision_runtime):
+                            message_text = await self._enrich_message_with_vision(
+                                message_text,
+                                image_paths,
+                            )
+                    finally:
+                        reset_conversation_context(affinity_token)
 
             if audio_paths:
                 message_text, _successful_transcripts = await self._enrich_message_with_transcription(
@@ -19052,6 +19094,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         source: SessionSource,
         history: List[Dict[str, Any]],
         session_key: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Optional[str]:
         """Run inbound preprocessing under the routed profile when multiplexed."""
         if getattr(getattr(self, "config", None), "multiplex_profiles", False):
@@ -19061,12 +19104,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     source=source,
                     history=history,
                     session_key=session_key,
+                    session_id=session_id,
                 )
         return await self._prepare_inbound_message_text(
             event=event,
             source=source,
             history=history,
             session_key=session_key,
+            session_id=session_id,
         )
 
     async def _prepare_clarify_reply_text(self, event) -> str:
@@ -20655,6 +20700,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             source=source,
             history=history,
             session_key=session_key,
+            session_id=session_entry.session_id,
         )
         if message_text is None:
             return
@@ -30288,6 +30334,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         source=next_source,
                         history=updated_history,
                         session_key=next_session_key,
+                        session_id=session_id,
                     )
                     if next_message is None:
                         return result

@@ -35,6 +35,16 @@ def _opaque_affinity_id(kind: str, value: Any) -> str:
     return f"hermes-{kind}-{digest}"
 
 
+def _runtime_cache_scope() -> str:
+    """Read the compression-only session root published for this request."""
+    try:
+        from agent.auxiliary_client import _runtime_main_value
+
+        return str(_runtime_main_value("cache_scope") or "").strip()
+    except Exception:
+        return ""
+
+
 def build_affinity_headers(
     *,
     base_url: Any,
@@ -44,7 +54,17 @@ def build_affinity_headers(
     if not _is_tode_newapi(base_url):
         return {}
 
-    conversation_root = get_conversation_context() or session_id
+    if is_delegated_child_context():
+        # Delegated children stay inside the parent's NewAPI conversation and
+        # use their own physical session id as the parallel lane.
+        conversation_root = get_conversation_context() or _runtime_cache_scope()
+    else:
+        # The runtime cache scope follows compression ancestry only: /new and
+        # /branch remain independent sessions, unlike the broader Portal
+        # attribution root which intentionally folds the whole parent tree.
+        conversation_root = (
+            _runtime_cache_scope() or get_conversation_context() or session_id
+        )
     conversation_id = _opaque_affinity_id("conversation", conversation_root)
     if not conversation_id:
         return {}
