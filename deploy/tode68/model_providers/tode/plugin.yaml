@@ -1,0 +1,5 @@
+name: tode-newapi-provider-profile
+kind: model-provider
+version: 1.0.0
+description: TODE NewAPI session affinity for the TODE68 Hermes deployment
+author: Liao Shiwu

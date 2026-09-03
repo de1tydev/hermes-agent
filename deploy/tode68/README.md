@@ -64,6 +64,24 @@ TODE68 保持 `gateway.group_sessions_per_user: false`，同一飞书群的所�
 agent:<profile>:feishu:group:<chat_id>
 ```
 
+## NewAPI 会话亲和
+
+TODE68 镜像通过 `deploy/tode68/model_providers/tode` 为
+`https://newapi.tode.ltd/v1` 的模型请求注入会话级软亲和请求头：
+
+- `X-NewAPI-Affinity-Conversation` 使用 Hermes 持久会话的 conversation
+  root 生成不透明摘要；同一会话的工具回合、重试、辅助模型调用和压缩轮转保持
+  不变，不同会话使用不同值；
+- 并行 `delegate_task` 子 Agent 复用父会话 conversation，并以自身稳定 session
+  生成 `X-NewAPI-Affinity-Lane`；
+- 亲和键不包含飞书用户、群聊、API Key、提示词或 NewAPI 渠道 ID，且不会发送给
+  `newapi.tode.ltd` 以外的端点；
+- `429` 继续由 Hermes 外层重试读取 `Retry-After` 并退避，重试不更换亲和键。
+
+该 provider adapter 同时覆盖主聊天和 compression、title、vision 等统一辅助模型
+调用。上线前应确认 NewAPI 对目标模型启用了 `stateful_v2`，并在至少 20 个不同
+session 的并发联调中检查 bucket 分布和渠道并发上限。
+
 上线前用 `tests/gateway/test_feishu_session_scope.py` 重放“回复附件发起任务、顶层
 追问进展、继续引用回复”的路由模式，并确认普通回复与群顶层消息 key 相同、真实
 TOPIC/forum 仍按 thread 隔离。
