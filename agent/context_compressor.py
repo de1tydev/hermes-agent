@@ -24,6 +24,7 @@ import sqlite3
 import re
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from agent.auxiliary_client import (
@@ -4520,10 +4521,10 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
 
         Splits the region into ``_LEAN_DIGEST_CHUNK_CHARS`` chunks (capped at
         ``_LEAN_DIGEST_MAX_CHUNKS`` — beyond that, earliest chunks are merged
-        coarser) and digests each with the compression LLM. Any chunk failure
-        degrades to a placeholder naming the message range; the whole call
-        never raises. Chunks run sequentially on the same transport as the
-        main summary.
+        coarser) and digests each with the compression LLM. Provider failures
+        degrade to placeholders. Exhausting the optional-section budget adds
+        an explicit recovery marker; host cancellation aborts the transaction.
+        Chunks run sequentially on the same transport as the main summary.
         """
         text = _serialize_turns_for_digest(
             turns, getattr(self, "_lean_pristine_tools", None),
@@ -4536,21 +4537,90 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
             chunk_size = (len(text) + _LEAN_DIGEST_MAX_CHUNKS - 1) // _LEAN_DIGEST_MAX_CHUNKS
             n_chunks = _LEAN_DIGEST_MAX_CHUNKS
         digests: list[str] = []
+        deadline = getattr(self, "_compression_deadline", None)
+        if isinstance(deadline, (int, float)):
+            remaining = max(0.0, deadline - time.monotonic())
+            # Leave time for provenance validation and the atomic DB commit.
+            deadline -= min(5.0, remaining * 0.1)
+        else:
+            deadline = None
+        from agent.auxiliary_client import _capture_aux_cancel_check
+
+        parent_cancel = _capture_aux_cancel_check()
+        telemetry = getattr(self, "_active_compression_telemetry", None)
+        if isinstance(telemetry, dict):
+            telemetry.update(
+                digest_count=n_chunks, digest_completed=0, digest_budget_exhausted=False,
+            )
+        logger.info(
+            "Compression detailed digests: %d segments, %d characters, budget=%s",
+            n_chunks, len(text),
+            f"{max(0.0, deadline - time.monotonic()):.1f}s" if deadline is not None else "unbounded",
+        )
+
+        def host_cancelled() -> bool:
+            check = getattr(self, "_compression_cancelled_check", None)
+            return bool(
+                (callable(check) and check())
+                or (callable(parent_cancel) and parent_cancel())
+            )
+
+        def budget_expired() -> bool:
+            return deadline is not None and time.monotonic() >= deadline
+
+        def budget_marker(ci: int) -> str:
+            if isinstance(telemetry, dict):
+                telemetry["digest_budget_exhausted"] = True
+            logger.info(
+                "Compression detailed digest budget exhausted after %d/%d segments", ci, n_chunks,
+            )
+            return (
+                f"[Detailed digest budget exhausted; segments {ci + 1}-{n_chunks} "
+                "were not summarized. Recover their original contents with "
+                "session_search; do not treat this section as a complete log.]"
+            )
+
         for ci in range(n_chunks):
+            if host_cancelled():
+                raise AuxiliaryExplicitCancellation()
+            if budget_expired():
+                digests.append(budget_marker(ci))
+                break
             segment = text[ci * chunk_size:(ci + 1) * chunk_size]
             if not segment.strip():
                 continue
             try:
                 from agent.auxiliary_client import call_llm
 
-                resp = call_llm(
+                call_kwargs = dict(
                     messages=[{
                         "role": "user",
                         "content": _LEAN_DIGEST_PROMPT.format(segment=segment),
                     }],
                     task="compression",
                     max_tokens=_LEAN_DIGEST_MAX_TOKENS,
+                    main_runtime={
+                        "model": self.model, "provider": self.provider,
+                        "base_url": self.base_url, "api_key": self.api_key,
+                        "api_mode": self.api_mode,
+                    },
                 )
+                if self.summary_model:
+                    call_kwargs["model"] = self.summary_model
+                if deadline is not None:
+                    call_kwargs["timeout"] = max(0.001, deadline - time.monotonic())
+                # A section budget cancels only this optional section, while a
+                # host cancellation must still abort the entire transaction.
+                cancel_source = SimpleNamespace(
+                    is_set=lambda: host_cancelled() or budget_expired(),
+                )
+                with aux_interrupt_protection(cancel_event=cancel_source):
+                    resp = call_llm(**call_kwargs)
+                if host_cancelled():
+                    raise AuxiliaryExplicitCancellation()
+                if budget_expired():
+                    digests.append(budget_marker(ci))
+                    break
                 body = (
                     resp.choices[0].message.content
                     if hasattr(resp, "choices") else str(resp)
@@ -4558,6 +4628,13 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
                 from agent.agent_runtime_helpers import strip_think_blocks
 
                 body = strip_think_blocks(None, body).strip()
+                if isinstance(telemetry, dict):
+                    telemetry["digest_completed"] += 1
+            except AuxiliaryExplicitCancellation:
+                if host_cancelled() or not budget_expired():
+                    raise
+                digests.append(budget_marker(ci))
+                break
             except Exception as exc:
                 logger.warning("lean chunk digest %d/%d failed: %s", ci + 1, n_chunks, exc)
                 body = f"[digest unavailable for segment {ci + 1}/{n_chunks} — recover via session_search]"
@@ -4994,6 +5071,12 @@ This compaction should PRIORITISE preserving all information related to the focu
             }
             if self.summary_model:
                 call_kwargs["model"] = self.summary_model
+            deadline = getattr(self, "_compression_deadline", None)
+            if isinstance(deadline, (int, float)):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AuxiliaryExplicitCancellation()
+                call_kwargs["timeout"] = remaining
             _aux_provider = ""
             _aux_model = self.summary_model or ""
             _aux_context = None

@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hermes_state import SessionDB
 
 
@@ -64,6 +66,54 @@ def _build_agent_with_db(db: SessionDB, session_id: str, **compressor_kwargs):
     # tests exercise isolation/fencing, never aux-model feasibility.
     agent._compression_feasibility_checked = True
     return agent
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_host_timeout_reaches_active_aux_transport_and_releases_worker(tmp_path, monkeypatch, streaming):
+    from agent import auxiliary_client as aux
+
+    db = SessionDB(db_path=tmp_path / "state.db")
+    db.create_session("HOST_TIMEOUT", source="cli")
+    agent = _build_agent_with_db(db, "HOST_TIMEOUT")
+    agent._cached_system_prompt = "sys"
+    agent._emit_warning = MagicMock()
+    monkeypatch.setattr(
+        "agent.conversation_compression.resolve_context_compression_timeouts",
+        lambda cfg=None: (0.15, 0.3),
+    )
+    started, release, exited = threading.Event(), threading.Event(), threading.Event()
+
+    def provider(_kwargs):
+        started.set()
+        deadline = time.monotonic() + 5
+        while not release.wait(0.01) and time.monotonic() < deadline:
+            if streaming:
+                aux._notify_aux_progress()
+
+    def engine(msgs, **kwargs):
+        try:
+            assert 0 < agent.context_compressor._compression_deadline - time.monotonic() <= 0.3
+            aux._run_protected_sync_provider_call(provider, {})
+            return msgs
+        finally:
+            exited.set()
+
+    agent.context_compressor.compress.side_effect = engine
+    live = [{"role": "user", "content": f"m{i}"} for i in range(20)]
+    baseline = copy.deepcopy(live)
+    try:
+        returned, _ = agent._compress_context(live, "sys", approx_tokens=120000)
+        assert started.is_set()
+        assert exited.wait(1), "host timeout left the compression worker occupied"
+        assert returned == baseline == live
+        assert agent.session_id == "HOST_TIMEOUT"
+        expected_reason = "total time limit reached" if streaming else "no streaming progress"
+        assert expected_reason in agent._emit_warning.call_args.args[0]
+        assert "with no output" not in agent._emit_warning.call_args.args[0]
+    finally:
+        release.set()
+        agent.close()
+        db.close()
 
 
 def test_f3_mutating_engine_cannot_touch_live_transcript_after_timeout(

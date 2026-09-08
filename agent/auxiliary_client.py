@@ -9218,6 +9218,8 @@ class _ChatStreamAccumulator:
         self.resp_model = model or ""
 
     def feed(self, chunk: Any) -> None:
+        if _aux_interrupt_protected() and _aux_interrupt_cancel_requested():
+            raise AuxiliaryExplicitCancellation()
         _notify_aux_progress()
         if (
             self._total_ceiling is not None
@@ -9374,8 +9376,12 @@ def call_llm(
     """Run an auxiliary LLM request, applying the configured task limit."""
     semaphore = _acquire_sync_aux_semaphore(task)
     if semaphore is not None:
-        semaphore.acquire()
+        while not semaphore.acquire(timeout=0.05):
+            if _aux_interrupt_cancel_requested():
+                raise AuxiliaryExplicitCancellation()
     try:
+        if _aux_interrupt_cancel_requested():
+            raise AuxiliaryExplicitCancellation()
         response = _call_llm_impl(
             task=task,
             provider=provider,

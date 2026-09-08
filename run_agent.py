@@ -8135,10 +8135,13 @@ class AIAgent:
                     return system_message or ""
 
             def _on_timeout(idle, waited, since_progress):
+                reason = ("total time limit reached" if waited >= total_ceiling
+                          else f"no streaming progress for {since_progress:.1f}s")
                 logger.warning(
-                    "Context compression made no progress for %.1fs "
+                    "Context compression timed out: %s; last progress %.1fs ago "
                     "(total wait %.1fs, ceiling %.1fs); continuing without "
                     "compression",
+                    reason,
                     since_progress,
                     waited,
                     total_ceiling,
@@ -8163,8 +8166,7 @@ class AIAgent:
                     if callable(record):
                         try:
                             record(
-                                "host compress_context timeout "
-                                "(no summary progress)"
+                                f"host compress_context timeout ({reason})"
                             )
                         except Exception:
                             logger.debug(
@@ -8176,8 +8178,8 @@ class AIAgent:
                 if callable(emit):
                     emit(
                         "⚠ Context compression timed out "
-                        f"after {idle:.1f}s with no output from the summary "
-                        "model. No messages were dropped — continuing without "
+                        f"after {waited:.1f}s: {reason}. "
+                        "No messages were dropped — continuing without "
                         "compression. Run /compress to retry, /new for a clean "
                         "session, or check auxiliary.compression."
                     )

@@ -987,6 +987,45 @@ def _make_progress_runner(monkeypatch, tmp_path, agent_cls, cfg_text):
     return runner, adapter, event
 
 
+@pytest.mark.asyncio
+async def test_streaming_hygiene_reports_total_ceiling_and_stops_waiting(monkeypatch, tmp_path):
+    import time
+
+    stopped = threading.Event()
+
+    class StreamingAgent:
+        def __init__(self, **kwargs):
+            self.session_id = kwargs.get("session_id")
+            self._last_compaction_in_place = False
+            self.context_compressor = SimpleNamespace(
+                bind_session_state=MagicMock(), _last_compress_aborted=False,
+                _last_aux_model_failure_model=None,
+            )
+            self.shutdown_memory_provider = MagicMock()
+            self.close = MagicMock()
+
+        def _compress_context(self, messages, *args, commit_fence=None, **kwargs):
+            assert commit_fence.summary_deadline is not None
+            started = time.monotonic()
+            while not commit_fence.is_cancelled and time.monotonic() - started < 2:
+                commit_fence.touch_progress()
+                time.sleep(0.005)
+            stopped.set()
+            return messages, ""
+
+    runner, adapter, event = _make_progress_runner(
+        monkeypatch, tmp_path, StreamingAgent,
+        "compression:\n  enabled: true\n  hygiene_timeout_seconds: 0.1\n"
+        "  hygiene_total_ceiling_seconds: 0.15\n",
+    )
+    assert await runner._handle_message(event) == "ok"
+    warnings = [s["content"] for s in adapter.sent if "Context compression timed out" in s["content"]]
+    assert len(warnings) == 1
+    assert "total time limit reached" in warnings[0]
+    assert "with no output" not in warnings[0]
+    assert stopped.wait(1)
+
+
 
 
 # ---------------------------------------------------------------------------

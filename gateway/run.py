@@ -20099,6 +20099,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
                                     loop = asyncio.get_running_loop()
                                     _hyg_commit_fence = CompressionCommitFence()
+                                    _hyg_wait_started = time.monotonic()
+                                    _hyg_commit_fence.summary_deadline = (
+                                        _hyg_wait_started + _hyg_total_ceiling_seconds
+                                    )
                                     _hyg_future = loop.run_in_executor(
                                         None,
                                         lambda: _hyg_agent._compress_context(
@@ -20119,18 +20123,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                         # A hard ceiling bounds the total wait so
                                         # a degenerate trickle stream can't hold
                                         # the turn forever.
-                                        _hyg_wait_started = time.monotonic()
                                         while True:
+                                            _remaining = (
+                                                _hyg_commit_fence.summary_deadline
+                                                - time.monotonic()
+                                            )
+                                            if _remaining <= 0:
+                                                raise asyncio.TimeoutError()
                                             # #76354 S3: charge the idle budget
                                             # from the LAST PROGRESS event, not
                                             # from the start of this wait slice —
                                             # otherwise silence can approach 2x
                                             # the configured timeout.
-                                            _slice = max(
+                                            _slice = min(_remaining, max(
                                                 _hyg_timeout_seconds
                                                 - _hyg_commit_fence.seconds_since_progress(),
                                                 0.005,
-                                            )
+                                            ))
                                             try:
                                                 _compressed, _ = await asyncio.wait_for(
                                                     asyncio.shield(_hyg_future),
@@ -20196,6 +20205,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                                 context="session hygiene timeout",
                                             )
                                             _hyg_cleanup_deferred = True
+                                            _hyg_waited = time.monotonic() - _hyg_wait_started
+                                            _hyg_idle = _hyg_commit_fence.seconds_since_progress()
+                                            _hyg_reason = (
+                                                "total time limit reached"
+                                                if _hyg_waited >= _hyg_total_ceiling_seconds
+                                                else f"no streaming progress for {_hyg_idle:.1f}s"
+                                            )
                                             if _hyg_failure_cooldown_seconds >= 0:
                                                 _hyg_cooldown = await asyncio.to_thread(
                                                     _hygiene_cooldown_for_failure,
@@ -20207,8 +20223,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                                     self, session_entry.session_id,
                                                     _hyg_cooldown,
                                                     "session hygiene compression "
-                                                    "timed out with no output from "
-                                                    "the summary model",
+                                                    f"timed out ({_hyg_reason})",
                                                 )
                                             from agent.session_activity import (
                                                 ActivityProvenance,
@@ -20222,18 +20237,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                             )
                                             logger.warning(
                                                 "Session hygiene compression for session %s "
-                                                "made no progress for %.1fs "
+                                                "timed out: %s; last progress %.1fs ago "
                                                 "(total wait %.1fs, ceiling %.1fs); "
                                                 "continuing without compression",
                                                 session_entry.session_id,
-                                                _hyg_commit_fence.seconds_since_progress(),
-                                                time.monotonic() - _hyg_wait_started,
+                                                _hyg_reason,
+                                                _hyg_idle,
+                                                _hyg_waited,
                                                 _hyg_total_ceiling_seconds,
                                             )
                                             _timeout_msg = (
                                                 "⚠️ Context compression timed out "
-                                                f"after {_hyg_timeout_seconds:.1f}s "
-                                                "with no output from the summary model. "
+                                                f"after {_hyg_waited:.1f}s: {_hyg_reason}. "
                                                 "No messages were dropped — continuing without "
                                                 "compression. Run /compress to retry, /reset for "
                                                 "a clean session, or check your "

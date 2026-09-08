@@ -514,6 +514,7 @@ class CompressionCommitFence:
         # a SLOW-but-alive summary model from a HUNG one, so slow models are
         # not killed by a fixed wall-clock deadline while tokens are moving.
         self._last_progress = time.monotonic()
+        self.summary_deadline: Optional[float] = None
 
     def touch_progress(self) -> None:
         """Record forward progress (e.g. a streamed summary token arriving).
@@ -899,6 +900,7 @@ def run_compress_context_with_progress_timeout(
     fence = fence if fence is not None else CompressionCommitFence()
     ceiling = max(float(total_ceiling_seconds), float(idle_timeout_seconds))
     idle = float(idle_timeout_seconds)
+    fence.summary_deadline = time.monotonic() + ceiling
     # Sync mirror of gateway session-hygiene's run_in_executor(None, ...) +
     # wait_for loop (gateway/run.py): offload compress_context onto the shared
     # daemon pool, poll with an inactivity budget + total ceiling, then
@@ -955,7 +957,7 @@ def run_compress_context_with_progress_timeout(
         _release_compression_admission()
         raise
     future.add_done_callback(_release_compression_admission)
-    wait_started = time.monotonic()
+    wait_started = fence.summary_deadline - ceiling
     # F2: EVERY host unwind (KeyboardInterrupt, task cancellation, unexpected
     # exception while waiting) must revoke future commit admission before the
     # host resumes, or a detached worker could later commit and mutate durable
@@ -3144,12 +3146,21 @@ def compress_context(
                 agent.context_compressor._compression_cancelled_check = (
                     lambda: commit_fence.is_cancelled
                 )
+                agent.context_compressor._compression_deadline = commit_fence.summary_deadline
             except Exception:
                 pass
         # Incoming-message interrupts and active-turn redirects must not tear an
         # atomic summary in half (#23975). Explicit stop surfaces set a separate
         # Event atomically; never infer cause from the racy message fields.
         _hard_cancel_event = getattr(agent, "_hard_interrupt_requested", None)
+        from types import SimpleNamespace
+
+        # Deadline cancellation is transaction-local. Never set the agent's
+        # hard-stop Event or close a process-shared provider client.
+        _summary_cancel_source = SimpleNamespace(is_set=lambda: bool(
+            (commit_fence is not None and commit_fence.is_cancelled)
+            or (_hard_cancel_event is not None and _hard_cancel_event.is_set())
+        ))
         try:
             # F6: never start expensive summary work for an already-cancelled
             # fence (a stale queued job admitted after host departure).
@@ -3162,7 +3173,7 @@ def compress_context(
                 compressed = messages
             else:
                 with aux_progress_hook(_progress_hook), aux_interrupt_protection(
-                    cancel_event=_hard_cancel_event
+                    cancel_event=_summary_cancel_source
                 ):
                     compressed = compress_fn(messages, **compress_kwargs)
                     # Freeze a hard stop that arrived after the final provider
@@ -3177,6 +3188,7 @@ def compress_context(
             if commit_fence is not None:
                 try:
                     agent.context_compressor._compression_cancelled_check = None
+                    agent.context_compressor._compression_deadline = None
                 except Exception:
                     pass
     except AuxiliaryExplicitCancellation:
@@ -3221,7 +3233,8 @@ def compress_context(
             started_at=_attempt_started_at,
             commit_status="aborted",
             split_status="aborted",
-            failure_class="explicit_interrupt",
+            failure_class=("host_timeout" if commit_fence is not None
+                           and commit_fence.is_cancelled else "explicit_interrupt"),
         )
         _existing_sp = getattr(agent, "_cached_system_prompt", None)
         if not _existing_sp:
